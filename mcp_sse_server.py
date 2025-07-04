@@ -372,12 +372,7 @@ client = SimpleJupyterHubClient(**JUPYTERHUB_CONFIG)
 # =============================================================================
 
 @mcp.tool(
-    description="새로운 Jupyter 노트북 파일을 생성합니다. 데이터 분석이나 실험을 시작할 때 사용하세요.",
-    examples=[
-        "새로운 분석 프로젝트 시작",
-        "데이터 탐색용 노트북 생성",
-        "실험 결과 정리용 노트북 생성"
-    ]
+    description="새로운 Jupyter 노트북 파일을 생성합니다. 데이터 분석이나 실험을 시작할 때 사용하세요."
 )
 async def create_notebook(
     name: str,  # 노트북 이름 (예: "data_analysis", "experiment_1")
@@ -397,12 +392,7 @@ async def create_notebook(
     return await client.create_notebook(name, path)
 
 @mcp.tool(
-    description="지정된 경로의 모든 Jupyter 노트북 목록을 조회합니다. 기존 작업을 찾거나 프로젝트 현황을 파악할 때 사용하세요.",
-    examples=[
-        "현재 프로젝트의 모든 노트북 확인",
-        "특정 폴더의 분석 파일들 찾기",
-        "작업 진행 상황 점검"
-    ]
+    description="지정된 경로의 모든 Jupyter 노트북 목록을 조회합니다. 기존 작업을 찾거나 프로젝트 현황을 파악할 때 사용하세요."
 )
 async def list_notebooks(
     path: str = ""  # 조회할 경로 (비어있으면 루트 디렉토리)
@@ -420,12 +410,7 @@ async def list_notebooks(
     return await client.list_notebooks(path)
 
 @mcp.tool(
-    description="특정 노트북의 모든 셀 내용과 실행 결과를 조회합니다. 기존 작업을 검토하거나 이어서 작업할 때 사용하세요.",
-    examples=[
-        "이전 분석 결과 확인",
-        "노트북 내용 전체 검토",
-        "특정 셀의 코드나 결과 확인"
-    ]
+    description="특정 노트북의 모든 셀 내용과 실행 결과를 조회합니다. 기존 작업을 검토하거나 이어서 작업할 때 사용하세요."
 )
 async def get_notebook_content(
     notebook_path: str  # 조회할 노트북 경로 (예: "analysis.ipynb")
@@ -443,12 +428,7 @@ async def get_notebook_content(
     return await client.get_notebook_content(notebook_path)
 
 @mcp.tool(
-    description="노트북에 새로운 셀을 추가합니다 (실행하지 않음). 코드나 마크다운을 준비만 하고 나중에 실행하려 할 때 사용하세요.",
-    examples=[
-        "여러 셀을 미리 준비해두기",
-        "마크다운 문서화 셀 추가",
-        "코드 템플릿 준비"
-    ]
+    description="노트북에 새로운 셀을 추가합니다 (실행하지 않음). 코드나 마크다운을 준비만 하고 나중에 실행하려 할 때 사용하세요."
 )
 async def add_cell(
     notebook_path: str,  # 대상 노트북 경로
@@ -470,12 +450,7 @@ async def add_cell(
     return await client.add_cell(notebook_path, content, cell_type)
 
 @mcp.tool(
-    description="노트북의 특정 셀을 실행합니다. 기존에 작성된 코드를 다시 실행하거나 결과를 갱신할 때 사용하세요.",
-    examples=[
-        "이전에 작성한 코드 다시 실행",
-        "데이터 변경 후 분석 재실행",
-        "특정 셀만 독립적으로 실행"
-    ]
+    description="노트북의 특정 셀을 실행합니다. 기존에 작성된 코드를 다시 실행하거나 결과를 갱신할 때 사용하세요."
 )
 async def execute_cell(
     notebook_path: str,  # 대상 노트북 경로
@@ -495,13 +470,7 @@ async def execute_cell(
     return await client.execute_cell_simple(notebook_path, cell_index)
 
 @mcp.tool(
-    description="노트북에 새로운 코드 셀을 추가하고 즉시 실행합니다. 데이터 분석이나 실험을 빠르게 진행할 때 가장 유용합니다.",
-    examples=[
-        "데이터 로딩 및 즉시 확인",
-        "새로운 분석 코드 작성 및 실행",
-        "실험 결과 즉시 확인",
-        "빠른 계산 및 시각화"
-    ]
+    description="노트북에 새로운 코드 셀을 추가하고 즉시 실행합니다. 데이터 분석이나 실험을 빠르게 진행할 때 가장 유용합니다."
 )
 async def add_and_execute_cell(
     notebook_path: str,  # 대상 노트북 경로
@@ -521,12 +490,7 @@ async def add_and_execute_cell(
     return await client.add_and_execute_cell(notebook_path, content)
 
 @mcp.tool(
-    description="JupyterHub MCP 서버의 현재 상태와 설정 정보를 확인합니다. 연결 문제가 있거나 서버 상태를 점검할 때 사용하세요.",
-    examples=[
-        "서버 연결 상태 확인",
-        "사용 가능한 기능 목록 확인",
-        "설정 정보 점검"
-    ]
+    description="JupyterHub MCP 서버의 현재 상태와 설정 정보를 확인합니다. 연결 문제가 있거나 서버 상태를 점검할 때 사용하세요."
 )
 def get_server_status() -> Dict[str, Any]:
     """
