@@ -341,7 +341,6 @@ class JupyterHubClient:
         
         return outputs
     
-    # 기존 메서드들 유지하되 실행 부분만 개선
     async def create_notebook(self, notebook_name: str, path: str = "") -> Dict[str, Any]:
         """새 노트북 생성"""
         try:
@@ -533,7 +532,6 @@ class JupyterHubClient:
             logger.error(f"Error in add_and_execute_cell_with_websocket: {str(e)}")
             return {"success": False, "error": str(e)}
     
-    # 기존 메서드들 유지
     async def list_notebooks(self, path: str = "") -> Dict[str, Any]:
         """노트북 목록 조회"""
         try:
@@ -739,7 +737,7 @@ class JupyterHubClient:
 jupyter_client = JupyterHubClient(**JUPYTERHUB_CONFIG)
 
 # =============================================================================
-# MCP 도구들 (기존 + 새로운 기능)
+# MCP 도구들 (핵심 기능만)
 # =============================================================================
 
 @mcp.tool()
@@ -763,42 +761,6 @@ async def add_and_execute_cell_real(notebook_path: str, content: str) -> Dict[st
     """
     return await jupyter_client.add_and_execute_cell_with_websocket(notebook_path, content)
 
-@mcp.tool()
-async def quick_calculation_real(notebook_name: str, expression: str) -> Dict[str, Any]:
-    """실제 JupyterHub 커널에서 빠른 계산 실행
-    
-    이 도구는 다음을 수행합니다:
-    1. 노트북 생성 (없으면)
-    2. 코드 셀 추가
-    3. WebSocket으로 실제 실행
-    4. 결과를 노트북에 저장
-    
-    복잡한 계산, 데이터 분석, 그래프 생성 등 모든 Python 코드가 실행 가능합니다.
-    """
-    try:
-        notebook_path = f"{notebook_name}.ipynb"
-        
-        # 노트북 생성 (존재하지 않으면)
-        content_result = await jupyter_client.get_notebook_content(notebook_path)
-        if not content_result.get("success"):
-            create_result = await jupyter_client.create_notebook(notebook_name)
-            if not create_result["success"]:
-                return create_result
-        
-        # 실제 실행
-        result = await jupyter_client.add_and_execute_cell_with_websocket(notebook_path, expression)
-        return {
-            "success": True,
-            "message": f"Real calculation completed: {expression}",
-            "notebook": notebook_path,
-            "expression": expression,
-            "result": result
-        }
-        
-    except Exception as e:
-        logger.error(f"Error in quick_calculation_real: {str(e)}")
-        return {"success": False, "error": str(e)}
-        
 @mcp.tool()
 async def create_notebook(notebook_name: str, path: str = "") -> Dict[str, Any]:
     """새 Jupyter 노트북을 생성합니다.
@@ -873,7 +835,7 @@ async def add_cell(notebook_path: str, content: str, cell_type: str = "code", po
     - 특정 위치에 셀을 삽입하고 싶을 때
     
     주의: 이 도구는 셀을 추가만 합니다. 코드를 실행하지 않습니다.
-    코드를 추가하고 바로 실행하려면 add_and_execute_cell을 사용하세요.
+    코드를 추가하고 바로 실행하려면 add_and_execute_cell_real을 사용하세요.
     
     Args:
         notebook_path: 대상 노트북 파일 경로
@@ -889,110 +851,6 @@ async def add_cell(notebook_path: str, content: str, cell_type: str = "code", po
         add_cell("test.ipynb", "# Data Analysis", "markdown", 0)
     """
     return await jupyter_client.add_cell(notebook_path, content, cell_type, position)
-
-@mcp.tool()
-async def execute_cell(notebook_path: str, cell_index: int) -> Dict[str, Any]:
-    """노트북의 특정 셀을 실행하고 결과를 노트북에 저장합니다.
-    
-    이 도구를 사용해야 하는 경우:
-    - 이미 존재하는 특정 셀만 실행하고 싶을 때
-    - 노트북의 일부 셀만 재실행하고 싶을 때
-    - 셀 번호를 알고 있고 그 셀만 실행하고 싶을 때
-    
-    주의: 셀 인덱스는 0부터 시작합니다. 노트북 내용을 먼저 확인하세요.
-    
-    Args:
-        notebook_path: 대상 노트북 파일 경로
-        cell_index: 실행할 셀의 인덱스 (0부터 시작)
-    
-    Returns:
-        Dict with execution results, outputs, and updated notebook status
-    
-    Example:
-        execute_cell("analysis.ipynb", 0) -> executes first cell
-        execute_cell("analysis.ipynb", 2) -> executes third cell
-    """
-    return await jupyter_client.execute_cell(notebook_path, cell_index)
-
-@mcp.tool()
-async def add_and_execute_cell(notebook_path: str, content: str) -> Dict[str, Any]:
-    """노트북에 코드 셀을 추가하고 즉시 실행합니다.
-    
-    이 도구를 사용해야 하는 경우:
-    - 새로운 코드를 노트북에 추가하고 바로 실행 결과를 보고 싶을 때
-    - 데이터 분석이나 계산을 단계별로 진행할 때
-    - 사용자가 "코드를 추가하고 실행해줘"라고 요청할 때
-    - 실험적인 코드를 빠르게 테스트하고 싶을 때
-    
-    이것은 add_cell + execute_cell을 한번에 수행하는 편의 기능입니다.
-    
-    Args:
-        notebook_path: 대상 노트북 파일 경로
-        content: 실행할 Python 코드
-    
-    Returns:
-        Dict with both add and execution results, including outputs and cell position
-    
-    Example:
-        add_and_execute_cell("test.ipynb", "print('Hello World')")
-        add_and_execute_cell("analysis.ipynb", "df = pd.read_csv('data.csv')\nprint(df.shape)")
-    """
-    return await jupyter_client.add_and_execute_cell(notebook_path, content)
-
-@mcp.tool()
-async def quick_calculation(notebook_name: str, expression: str) -> Dict[str, Any]:
-    """빠른 계산이나 간단한 코드 실행을 위해 노트북을 생성하고 코드를 실행합니다.
-    
-    이 도구를 사용해야 하는 경우:
-    - 사용자가 "1+1 계산해줘", "수학 계산해줘" 같은 간단한 요청을 할 때
-    - 노트북이 없는 상태에서 새로 만들어서 계산하고 싶을 때
-    - 일회성 계산이나 실험을 위해 새로운 노트북이 필요할 때
-    - 완전히 새로운 작업을 시작할 때
-    
-    이 도구는 다음을 자동으로 수행합니다:
-    1. 노트북이 없으면 생성
-    2. 코드 셀 추가
-    3. 즉시 실행
-    4. 결과를 노트북에 저장
-    
-    Args:
-        notebook_name: 생성할 노트북 이름 (.ipynb 확장자 자동 추가)
-        expression: 실행할 Python 코드나 수학 계산식
-    
-    Returns:
-        Dict with complete operation results including notebook creation and execution
-    
-    Example:
-        quick_calculation("calc", "1 + 1")
-        quick_calculation("analysis", "import numpy as np; print(np.mean([1,2,3,4,5]))")
-        quick_calculation("test", "result = 2 ** 10\nprint(f'2^10 = {result}')")
-    """
-    try:
-        # 노트북 경로 생성
-        notebook_path = f"{notebook_name}.ipynb"
-        
-        # 노트북이 존재하는지 확인
-        content_result = await jupyter_client.get_notebook_content(notebook_path)
-        
-        # 노트북이 없으면 생성
-        if not content_result["success"]:
-            create_result = await jupyter_client.create_notebook(notebook_name)
-            if not create_result["success"]:
-                return create_result
-        
-        # 계산 셀 추가 및 실행
-        result = await jupyter_client.add_and_execute_cell(notebook_path, expression)
-        return {
-            "success": True,
-            "message": f"Quick calculation completed: {expression}",
-            "notebook": notebook_path,
-            "expression": expression,
-            "result": result
-        }
-        
-    except Exception as e:
-        logger.error(f"Error in quick_calculation: {str(e)}")
-        return {"success": False, "error": str(e)}
 
 @mcp.tool()
 async def delete_cell(notebook_path: str, cell_index: int) -> Dict[str, Any]:
@@ -1101,17 +959,16 @@ def get_server_status() -> Dict[str, Any]:
     return {
         "status": "running",
         "timestamp": time.time(),
-        "version": "2.1.0",
+        "version": "2.0.0",
         "transport": "sse",
         "features": [
             "create_notebook", "list_notebooks", "get_notebook_content", "delete_notebook",
-            "add_cell", "execute_cell", "add_and_execute_cell", "quick_calculation", "delete_cell",
+            "add_cell", "execute_cell_real", "add_and_execute_cell_real", "delete_cell",
             "start_kernel", "list_running_kernels", "start_user_server"
         ],
-        "new_features": [
-            "execute_cell - 셀 실행 기능",
-            "add_and_execute_cell - 셀 추가 후 바로 실행",
-            "quick_calculation - 빠른 계산 (노트북 생성 + 셀 추가 + 실행)"
+        "core_features": [
+            "execute_cell_real - WebSocket 기반 실제 셀 실행",
+            "add_and_execute_cell_real - 셀 추가 후 실제 실행"
         ],
         "jupyter_config": {
             "hub_url": JUPYTERHUB_CONFIG["hub_url"],
@@ -1125,41 +982,39 @@ def get_server_status() -> Dict[str, Any]:
 
 @mcp.resource("jupyter://help")
 def get_help_info() -> str:
-    """JupyterHub MCP 사용 도움말 (업데이트)"""
+    """JupyterHub MCP 사용 도움말 (간소화)"""
     return f"""
-# JupyterHub MCP Server v2.1.0 - Enhanced with Cell Execution
+# JupyterHub MCP Server v2.0.0 - WebSocket 기반 실제 실행
 
-## 🚀 새로운 기능들
+## 🚀 핵심 기능
 
-### 셀 실행 기능
-- `execute_cell(notebook_path, cell_index)` - 특정 셀 실행
-- `add_and_execute_cell(notebook_path, content)` - 셀 추가 후 바로 실행  
-- `quick_calculation(notebook_name, expression)` - 빠른 계산
+### 실제 코드 실행 (WebSocket 기반)
+- `execute_cell_real(notebook_path, cell_index)` - 특정 셀 실행
+- `add_and_execute_cell_real(notebook_path, content)` - 셀 추가 후 바로 실행
 
 ## 📝 사용 예시
 
 ### 1+1 계산 예시
 ```python
-# 방법 1: 빠른 계산 (가장 간단)
-quick_calculation("calc", "1 + 1")
-
-# 방법 2: 단계별 실행
-create_notebook("test")
-add_and_execute_cell("test.ipynb", "result = 1 + 1\\nprint(f'Result: {{result}}')")
-
-# 방법 3: 수동 단계
-create_notebook("manual")
-add_cell("manual.ipynb", "1 + 1", "code")
-execute_cell("manual.ipynb", 0)
+# 노트북 생성 후 코드 실행
+create_notebook("calc")
+add_and_execute_cell_real("calc.ipynb", "result = 1 + 1\\nprint(f'1 + 1 = {{result}}')")
 ```
 
 ### 복잡한 계산 예시
 ```python
-quick_calculation("analysis", '''
+create_notebook("analysis")
+add_and_execute_cell_real("analysis.ipynb", '''
 import numpy as np
-data = np.array([1, 2, 3, 4, 5])
-mean = data.mean()
-print(f"Mean: {{mean}}")
+import matplotlib.pyplot as plt
+
+data = np.random.normal(0, 1, 1000)
+plt.hist(data, bins=30)
+plt.title("Normal Distribution")
+plt.show()
+
+print(f"Mean: {{data.mean():.4f}}")
+print(f"Std: {{data.std():.4f}}")
 ''')
 ```
 
@@ -1168,35 +1023,40 @@ print(f"Mean: {{mean}}")
 ### Notebook Management
 - create_notebook, list_notebooks, get_notebook_content, delete_notebook
 
-### Cell Operations  
-- add_cell, execute_cell, add_and_execute_cell, delete_cell
-- **quick_calculation** (⭐ 새 기능)
+### Cell Operations (핵심)
+- **execute_cell_real** - WebSocket 기반 실제 실행
+- **add_and_execute_cell_real** - 셀 추가 후 실제 실행
+- add_cell, delete_cell
 
 ### Kernel Management
 - start_kernel, list_running_kernels
 
-### Server Management  
+### Server Management
 - start_user_server, get_server_status
+
+## 💡 주요 장점
+- 실제 JupyterHub 환경에서 실행
+- 변수 상태 유지 (메모리 공유)
+- 모든 Python 라이브러리 사용 가능
+- 실제 Jupyter 출력 형식
 
 Config: {JUPYTERHUB_CONFIG['hub_url']} | {JUPYTERHUB_CONFIG['username']}
 """
 
 if __name__ == "__main__":
-    print(f"🚀 Starting {SERVER_NAME} v2.1.0...")
+    print(f"🚀 Starting {SERVER_NAME} v2.0.0...")
     print(f"📍 Server will be available at: http://{SERVER_HOST}:{SERVER_PORT}/sse")
     print(f"📝 JupyterHub URL: {JUPYTERHUB_CONFIG['hub_url']}")
     print(f"👤 Username: {JUPYTERHUB_CONFIG['username']}")
     print("🔧 Transport: SSE (Server-Sent Events)")
     
-    print("\n✨ New Features in v2.1.0:")
-    print("  ⚡ execute_cell - Execute specific cells")
-    print("  🚀 add_and_execute_cell - Add and execute in one step")
-    print("  🧮 quick_calculation - Instant calculations")
+    print("\n✨ Core Features:")
+    print("  ⚡ execute_cell_real - WebSocket 기반 실제 셀 실행")
+    print("  🚀 add_and_execute_cell_real - 셀 추가 후 실제 실행")
     
     print("\n🛠️ Available tools:")
     print("  📓 Notebooks: create_notebook, list_notebooks, get_notebook_content, delete_notebook")
-    print("  📝 Cells: add_cell, execute_cell, add_and_execute_cell, delete_cell")
-    print("  🧮 Quick: quick_calculation")
+    print("  📝 Cells: add_cell, execute_cell_real, add_and_execute_cell_real, delete_cell")
     print("  🔧 System: start_kernel, list_running_kernels, start_user_server, get_server_status")
     
     print("\n📡 Starting server...")
