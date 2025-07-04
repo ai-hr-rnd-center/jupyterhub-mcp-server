@@ -190,7 +190,7 @@ class JupyterHubClient:
             return {"success": False, "error": str(e)}
     
     async def execute_cell(self, notebook_path: str, cell_index: int) -> Dict[str, Any]:
-        """셀 실행"""
+        """셀 실행 (새로운 기능!)"""
         try:
             server_url = await self.get_user_server_url()
             session = await self.get_session()
@@ -499,37 +499,172 @@ jupyter_client = JupyterHubClient(**JUPYTERHUB_CONFIG)
 
 @mcp.tool()
 async def create_notebook(notebook_name: str, path: str = "") -> Dict[str, Any]:
-    """새 Jupyter 노트북을 생성합니다."""
+    """새 Jupyter 노트북을 생성합니다.
+    
+    이 도구를 사용해야 하는 경우:
+    - 사용자가 새로운 노트북 생성을 요청할 때
+    - 데이터 분석, 실험, 계산을 위한 새로운 작업공간이 필요할 때
+    - 프로젝트별로 별도의 노트북을 만들고 싶을 때
+    
+    Args:
+        notebook_name: 생성할 노트북 이름 (예: "data_analysis", "experiment_1")
+        path: 노트북을 생성할 디렉토리 경로 (기본값: 루트 디렉토리)
+    
+    Returns:
+        Dict with success status, message, file path, and access URL
+    
+    Example:
+        create_notebook("my_analysis", "projects") -> creates "projects/my_analysis.ipynb"
+    """
     return await jupyter_client.create_notebook(notebook_name, path)
 
 @mcp.tool()
 async def list_notebooks(path: str = "") -> Dict[str, Any]:
-    """JupyterHub 노트북 목록을 조회합니다."""
+    """JupyterHub에서 노트북 목록을 조회합니다.
+    
+    이 도구를 사용해야 하는 경우:
+    - 사용자가 기존 노트북들을 확인하고 싶을 때
+    - 특정 디렉토리의 노트북들을 찾을 때
+    - 작업할 노트북을 선택하기 전에 목록을 보고 싶을 때
+    
+    Args:
+        path: 조회할 디렉토리 경로 (기본값: 루트 디렉토리)
+    
+    Returns:
+        Dict with notebook list, count, and metadata (name, path, modified date, size)
+    
+    Example:
+        list_notebooks() -> shows all notebooks in root
+        list_notebooks("projects") -> shows notebooks in projects folder
+    """
     return await jupyter_client.list_notebooks(path)
 
 @mcp.tool()
 async def get_notebook_content(notebook_path: str) -> Dict[str, Any]:
-    """노트북의 내용과 셀들을 조회합니다."""
+    """노트북의 전체 내용과 모든 셀들을 조회합니다.
+    
+    이 도구를 사용해야 하는 경우:
+    - 노트북의 현재 상태를 확인할 때
+    - 셀의 내용이나 실행 결과를 검토할 때
+    - 노트북을 수정하기 전에 현재 내용을 파악할 때
+    - 특정 셀의 인덱스나 내용을 찾을 때
+    
+    Args:
+        notebook_path: 조회할 노트북 파일 경로 (예: "analysis.ipynb", "projects/data.ipynb")
+    
+    Returns:
+        Dict with full notebook content, cell list with indices, types, source code, and outputs
+    
+    Example:
+        get_notebook_content("analysis.ipynb") -> shows all cells and their content
+    """
     return await jupyter_client.get_notebook_content(notebook_path)
 
 @mcp.tool()
 async def add_cell(notebook_path: str, content: str, cell_type: str = "code", position: int = -1) -> Dict[str, Any]:
-    """노트북에 셀을 추가합니다."""
+    """노트북에 새로운 셀을 추가합니다 (실행하지 않음).
+    
+    이 도구를 사용해야 하는 경우:
+    - 코드나 마크다운을 노트북에 추가만 하고 싶을 때 (실행 안함)
+    - 여러 셀을 차례로 추가한 후 나중에 실행하고 싶을 때
+    - 마크다운 셀로 설명이나 제목을 추가할 때
+    - 특정 위치에 셀을 삽입하고 싶을 때
+    
+    주의: 이 도구는 셀을 추가만 합니다. 코드를 실행하지 않습니다.
+    코드를 추가하고 바로 실행하려면 add_and_execute_cell을 사용하세요.
+    
+    Args:
+        notebook_path: 대상 노트북 파일 경로
+        content: 셀에 추가할 내용 (코드 또는 마크다운)
+        cell_type: "code" 또는 "markdown" (기본값: "code")
+        position: 셀을 삽입할 위치 (-1이면 마지막에 추가)
+    
+    Returns:
+        Dict with success status, cell position, and content preview
+    
+    Example:
+        add_cell("test.ipynb", "import pandas as pd", "code")
+        add_cell("test.ipynb", "# Data Analysis", "markdown", 0)
+    """
     return await jupyter_client.add_cell(notebook_path, content, cell_type, position)
 
 @mcp.tool()
 async def execute_cell(notebook_path: str, cell_index: int) -> Dict[str, Any]:
-    """노트북의 특정 셀을 실행합니다. (새 기능!)"""
+    """노트북의 특정 셀을 실행하고 결과를 노트북에 저장합니다.
+    
+    이 도구를 사용해야 하는 경우:
+    - 이미 존재하는 특정 셀만 실행하고 싶을 때
+    - 노트북의 일부 셀만 재실행하고 싶을 때
+    - 셀 번호를 알고 있고 그 셀만 실행하고 싶을 때
+    
+    주의: 셀 인덱스는 0부터 시작합니다. 노트북 내용을 먼저 확인하세요.
+    
+    Args:
+        notebook_path: 대상 노트북 파일 경로
+        cell_index: 실행할 셀의 인덱스 (0부터 시작)
+    
+    Returns:
+        Dict with execution results, outputs, and updated notebook status
+    
+    Example:
+        execute_cell("analysis.ipynb", 0) -> executes first cell
+        execute_cell("analysis.ipynb", 2) -> executes third cell
+    """
     return await jupyter_client.execute_cell(notebook_path, cell_index)
 
 @mcp.tool()
 async def add_and_execute_cell(notebook_path: str, content: str) -> Dict[str, Any]:
-    """셀을 추가하고 바로 실행합니다. (새 기능!)"""
+    """노트북에 코드 셀을 추가하고 즉시 실행합니다.
+    
+    이 도구를 사용해야 하는 경우:
+    - 새로운 코드를 노트북에 추가하고 바로 실행 결과를 보고 싶을 때
+    - 데이터 분석이나 계산을 단계별로 진행할 때
+    - 사용자가 "코드를 추가하고 실행해줘"라고 요청할 때
+    - 실험적인 코드를 빠르게 테스트하고 싶을 때
+    
+    이것은 add_cell + execute_cell을 한번에 수행하는 편의 기능입니다.
+    
+    Args:
+        notebook_path: 대상 노트북 파일 경로
+        content: 실행할 Python 코드
+    
+    Returns:
+        Dict with both add and execution results, including outputs and cell position
+    
+    Example:
+        add_and_execute_cell("test.ipynb", "print('Hello World')")
+        add_and_execute_cell("analysis.ipynb", "df = pd.read_csv('data.csv')\nprint(df.shape)")
+    """
     return await jupyter_client.add_and_execute_cell(notebook_path, content)
 
 @mcp.tool()
 async def quick_calculation(notebook_name: str, expression: str) -> Dict[str, Any]:
-    """빠른 계산을 위해 노트북을 생성하고 계산 셀을 추가/실행합니다"""
+    """빠른 계산이나 간단한 코드 실행을 위해 노트북을 생성하고 코드를 실행합니다.
+    
+    이 도구를 사용해야 하는 경우:
+    - 사용자가 "1+1 계산해줘", "수학 계산해줘" 같은 간단한 요청을 할 때
+    - 노트북이 없는 상태에서 새로 만들어서 계산하고 싶을 때
+    - 일회성 계산이나 실험을 위해 새로운 노트북이 필요할 때
+    - 완전히 새로운 작업을 시작할 때
+    
+    이 도구는 다음을 자동으로 수행합니다:
+    1. 노트북이 없으면 생성
+    2. 코드 셀 추가
+    3. 즉시 실행
+    4. 결과를 노트북에 저장
+    
+    Args:
+        notebook_name: 생성할 노트북 이름 (.ipynb 확장자 자동 추가)
+        expression: 실행할 Python 코드나 수학 계산식
+    
+    Returns:
+        Dict with complete operation results including notebook creation and execution
+    
+    Example:
+        quick_calculation("calc", "1 + 1")
+        quick_calculation("analysis", "import numpy as np; print(np.mean([1,2,3,4,5]))")
+        quick_calculation("test", "result = 2 ** 10\nprint(f'2^10 = {result}')")
+    """
     try:
         # 노트북 경로 생성
         notebook_path = f"{notebook_name}.ipynb"
@@ -559,27 +694,103 @@ async def quick_calculation(notebook_name: str, expression: str) -> Dict[str, An
 
 @mcp.tool()
 async def delete_cell(notebook_path: str, cell_index: int) -> Dict[str, Any]:
-    """노트북에서 셀을 삭제합니다."""
+    """노트북에서 특정 셀을 삭제합니다.
+    
+    이 도구를 사용해야 하는 경우:
+    - 잘못 추가된 셀을 제거하고 싶을 때
+    - 노트북을 정리하고 불필요한 셀을 삭제할 때
+    - 에러가 있는 셀을 제거하고 싶을 때
+    
+    주의: 삭제된 셀은 복구할 수 없습니다.
+    
+    Args:
+        notebook_path: 대상 노트북 파일 경로
+        cell_index: 삭제할 셀의 인덱스 (0부터 시작)
+    
+    Returns:
+        Dict with deletion status and remaining cell count
+    
+    Example:
+        delete_cell("test.ipynb", 2) -> deletes third cell
+    """
     return await jupyter_client.delete_cell(notebook_path, cell_index)
 
 @mcp.tool()
 async def delete_notebook(notebook_path: str) -> Dict[str, Any]:
-    """노트북을 삭제합니다."""
+    """노트북 파일을 완전히 삭제합니다.
+    
+    이 도구를 사용해야 하는 경우:
+    - 더 이상 필요없는 노트북을 제거하고 싶을 때
+    - 실험용으로 만든 임시 노트북을 정리할 때
+    - 저장공간을 확보하고 싶을 때
+    
+    주의: 삭제된 노트북은 복구할 수 없습니다.
+    
+    Args:
+        notebook_path: 삭제할 노트북 파일 경로
+    
+    Returns:
+        Dict with deletion confirmation
+    
+    Example:
+        delete_notebook("old_experiment.ipynb")
+    """
     return await jupyter_client.delete_notebook(notebook_path)
 
 @mcp.tool()
 async def start_kernel(notebook_path: str) -> Dict[str, Any]:
-    """노트북을 위한 새 커널을 시작합니다."""
+    """노트북을 위한 새로운 Python 커널을 시작합니다.
+    
+    이 도구를 사용해야 하는 경우:
+    - 커널이 없어서 코드 실행이 안될 때
+    - 커널이 죽었거나 응답하지 않을 때
+    - 새로운 Python 환경에서 코드를 실행하고 싶을 때
+    
+    Args:
+        notebook_path: 커널을 시작할 노트북 경로 (참조용)
+    
+    Returns:
+        Dict with kernel ID, name, and startup status
+    
+    Example:
+        start_kernel("analysis.ipynb")
+    """
     return await jupyter_client.start_kernel(notebook_path)
 
 @mcp.tool()
 async def list_running_kernels() -> Dict[str, Any]:
-    """실행 중인 커널 목록을 조회합니다."""
+    """현재 실행 중인 모든 Python 커널의 목록을 조회합니다.
+    
+    이 도구를 사용해야 하는 경우:
+    - 시스템 리소스 사용량을 확인하고 싶을 때
+    - 실행 중인 커널들을 모니터링하고 싶을 때
+    - 커널 관리나 문제 해결이 필요할 때
+    
+    Returns:
+        Dict with list of running kernels, their IDs, and count
+    
+    Example:
+        list_running_kernels() -> shows all active Python kernels
+    """
     return await jupyter_client.list_running_kernels()
 
 @mcp.tool()
 async def start_user_server() -> Dict[str, Any]:
-    """사용자의 Jupyter 서버를 시작합니다."""
+    """사용자의 JupyterHub 서버를 시작합니다.
+    
+    이 도구를 사용해야 하는 경우:
+    - JupyterHub 서버가 중지되어 있을 때
+    - 노트북 작업을 시작하기 전에 서버를 확실히 실행하고 싶을 때
+    - 서버 연결 문제가 있을 때
+    
+    이 도구는 보통 자동으로 호출되므로 수동으로 사용할 필요는 거의 없습니다.
+    
+    Returns:
+        Dict with server startup status and message
+    
+    Example:
+        start_user_server() -> ensures JupyterHub server is running
+    """
     return await jupyter_client.start_user_server()
 
 @mcp.tool()
