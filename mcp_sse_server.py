@@ -6,6 +6,8 @@ import os
 import json
 from typing import Dict, Any, Optional
 from dotenv import load_dotenv
+import io
+import contextlib
 import httpx
 
 load_dotenv()
@@ -267,9 +269,9 @@ class SimpleJupyterHubClient:
                 
         except Exception as e:
             return {"success": False, "error": str(e)}
-        
+            
     async def _safe_execute(self, code: str) -> Dict[str, Any]:
-        """안전한 코드 실행 - import 지원"""
+        """최소한의 로컬 실행 (간단한 계산용) - 실제로는 JupyterHub kernel 사용 권장"""
         import sys
         import io
         import contextlib
@@ -279,68 +281,34 @@ class SimpleJupyterHubClient:
             old_stdout = sys.stdout
             captured_output = io.StringIO()
             
-            # 안전한 네임스페이스 - import 추가
+            # 기본적인 shell 명령어만 차단 (최소한의 안전장치)
+            if code.strip().startswith('!'):
+                return {
+                    "success": False,
+                    "error": "Shell commands (!cmd) are not supported in local execution. Use JupyterHub kernel for full functionality."
+                }
+            
+            # 기본 네임스페이스 (너무 제한적이지 않게)
             namespace = {
                 '__name__': '__main__',
-                '__builtins__': {
-                    # 기본 내장 함수들
-                    'print': print, 'len': len, 'range': range, 'sum': sum,
-                    'max': max, 'min': min, 'abs': abs, 'round': round,
-                    'sorted': sorted, 'list': list, 'dict': dict, 'set': set,
-                    'tuple': tuple, 'str': str, 'int': int, 'float': float,
-                    'bool': bool, 'type': type, 'isinstance': isinstance,
-                    'enumerate': enumerate, 'zip': zip, 'map': map, 'filter': filter,
-                    
-                    # import 관련 추가
-                    '__import__': __import__,  # 핵심: import 기능 활성화
-                    'ImportError': ImportError,  # 에러 처리용
-                    'ModuleNotFoundError': ModuleNotFoundError,  # 에러 처리용
-                    
-                    # 예외 처리
-                    'Exception': Exception,
-                    'ValueError': ValueError,
-                    'TypeError': TypeError,
-                    'KeyError': KeyError,
-                    'IndexError': IndexError,
-                }
+                '__builtins__': __builtins__,  # 기본 내장 함수들 모두 허용
             }
             
-            # 안전한 라이브러리들 미리 로드 (선택사항)
-            safe_modules = {
-                'math': None,
-                'random': None,
-                'datetime': None,
-                'json': None,
-                'os': None,  # 주의: os는 보안상 위험할 수 있음
-                'sys': None,
-                'time': None,
-                'collections': None,
-                'itertools': None,
-                'functools': None,
-                'operator': None,
-                'statistics': None,
-                'decimal': None,
-                'fractions': None,
-                'pathlib': None,
-                'uuid': None,
-                'hashlib': None,
-                'base64': None,
-                'urllib': None,
-                'requests': None,  # 외부 라이브러리
-                'numpy': None,     # 데이터 과학용
-                'pandas': None,    # 데이터 과학용
-                'matplotlib': None,# 시각화용
-                'seaborn': None,   # 시각화용
-                'sklearn': None,   # 머신러닝용
-                'scipy': None,     # 과학 계산용
-            }
-            
-            # 사용 가능한 모듈들을 미리 체크하고 로드
-            for module_name in safe_modules:
+            # 자주 사용되는 모듈들 미리 로드
+            common_modules = ['math', 'random', 'datetime', 'json', 'time']
+            for module_name in common_modules:
                 try:
                     namespace[module_name] = __import__(module_name)
                 except ImportError:
-                    pass  # 모듈이 없으면 무시
+                    pass
+            
+            # numpy, pandas도 있으면 로드
+            data_modules = ['numpy', 'pandas']
+            for module_name in data_modules:
+                try:
+                    namespace[module_name] = __import__(module_name)
+                except ImportError:
+                    pass
             
             result = None
             
@@ -370,17 +338,18 @@ class SimpleJupyterHubClient:
             return {
                 "success": True,
                 "result": result,
-                "output": output
+                "output": output,
+                "note": "This is local execution for basic operations. For full Jupyter functionality, the code will be executed on JupyterHub kernel."
             }
             
         except Exception as e:
             return {
                 "success": False,
-                "error": str(e)
+                "error": str(e),
+                "note": "Local execution failed. The code will still be saved to the notebook for JupyterHub kernel execution."
             }
         finally:
             sys.stdout = old_stdout
-                
     
     async def add_and_execute_cell(self, notebook_path: str, content: str) -> Dict[str, Any]:
         """셀 추가 + 실행"""
