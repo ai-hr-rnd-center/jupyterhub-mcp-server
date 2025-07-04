@@ -368,42 +368,173 @@ class SimpleJupyterHubClient:
 client = SimpleJupyterHubClient(**JUPYTERHUB_CONFIG)
 
 # =============================================================================
-# 핵심 MCP 도구들 (간소화)
+# 핵심 MCP 도구들 (상세한 설명 추가)
 # =============================================================================
 
-@mcp.tool()
-async def create_notebook(name: str, path: str = "") -> Dict[str, Any]:
-    """새 노트북을 생성합니다."""
+@mcp.tool(
+    description="새로운 Jupyter 노트북 파일을 생성합니다. 데이터 분석이나 실험을 시작할 때 사용하세요.",
+    examples=[
+        "새로운 분석 프로젝트 시작",
+        "데이터 탐색용 노트북 생성",
+        "실험 결과 정리용 노트북 생성"
+    ]
+)
+async def create_notebook(
+    name: str,  # 노트북 이름 (예: "data_analysis", "experiment_1")
+    path: str = ""  # 저장 경로 (비어있으면 루트 디렉토리)
+) -> Dict[str, Any]:
+    """
+    새 노트북을 생성합니다.
+    
+    Args:
+        name: 노트북 이름 (.ipynb 확장자는 자동 추가됨)
+        path: 저장할 경로 (선택사항, 기본값: 루트)
+    
+    Returns:
+        성공 시: {"success": True, "path": "생성된_경로", "message": "생성_메시지"}
+        실패 시: {"success": False, "error": "에러_메시지"}
+    """
     return await client.create_notebook(name, path)
 
-@mcp.tool()
-async def list_notebooks(path: str = "") -> Dict[str, Any]:
-    """노트북 목록을 조회합니다."""
+@mcp.tool(
+    description="지정된 경로의 모든 Jupyter 노트북 목록을 조회합니다. 기존 작업을 찾거나 프로젝트 현황을 파악할 때 사용하세요.",
+    examples=[
+        "현재 프로젝트의 모든 노트북 확인",
+        "특정 폴더의 분석 파일들 찾기",
+        "작업 진행 상황 점검"
+    ]
+)
+async def list_notebooks(
+    path: str = ""  # 조회할 경로 (비어있으면 루트 디렉토리)
+) -> Dict[str, Any]:
+    """
+    노트북 목록을 조회합니다.
+    
+    Args:
+        path: 조회할 경로 (선택사항, 기본값: 루트)
+    
+    Returns:
+        성공 시: {"success": True, "notebooks": [{"name": "파일명", "path": "경로"}], "count": 개수}
+        실패 시: {"success": False, "error": "에러_메시지"}
+    """
     return await client.list_notebooks(path)
 
-@mcp.tool()
-async def get_notebook_content(notebook_path: str) -> Dict[str, Any]:
-    """노트북 내용을 조회합니다."""
+@mcp.tool(
+    description="특정 노트북의 모든 셀 내용과 실행 결과를 조회합니다. 기존 작업을 검토하거나 이어서 작업할 때 사용하세요.",
+    examples=[
+        "이전 분석 결과 확인",
+        "노트북 내용 전체 검토",
+        "특정 셀의 코드나 결과 확인"
+    ]
+)
+async def get_notebook_content(
+    notebook_path: str  # 조회할 노트북 경로 (예: "analysis.ipynb")
+) -> Dict[str, Any]:
+    """
+    노트북의 전체 내용을 조회합니다.
+    
+    Args:
+        notebook_path: 노트북 파일 경로
+    
+    Returns:
+        성공 시: {"success": True, "cells": [{"index": 순서, "type": "타입", "source": "코드", "outputs": "결과"}], "count": 셀_개수}
+        실패 시: {"success": False, "error": "에러_메시지"}
+    """
     return await client.get_notebook_content(notebook_path)
 
-@mcp.tool()
-async def add_cell(notebook_path: str, content: str, cell_type: str = "code") -> Dict[str, Any]:
-    """셀을 추가합니다 (실행하지 않음)."""
+@mcp.tool(
+    description="노트북에 새로운 셀을 추가합니다 (실행하지 않음). 코드나 마크다운을 준비만 하고 나중에 실행하려 할 때 사용하세요.",
+    examples=[
+        "여러 셀을 미리 준비해두기",
+        "마크다운 문서화 셀 추가",
+        "코드 템플릿 준비"
+    ]
+)
+async def add_cell(
+    notebook_path: str,  # 대상 노트북 경로
+    content: str,        # 셀에 입력할 내용
+    cell_type: str = "code"  # 셀 타입: "code" 또는 "markdown"
+) -> Dict[str, Any]:
+    """
+    노트북에 새로운 셀을 추가합니다 (실행하지 않음).
+    
+    Args:
+        notebook_path: 대상 노트북 파일 경로
+        content: 셀에 추가할 내용 (코드 또는 마크다운)
+        cell_type: 셀 타입 ("code" 또는 "markdown", 기본값: "code")
+    
+    Returns:
+        성공 시: {"success": True, "position": 셀_위치, "message": "추가_메시지"}
+        실패 시: {"success": False, "error": "에러_메시지"}
+    """
     return await client.add_cell(notebook_path, content, cell_type)
 
-@mcp.tool()
-async def execute_cell(notebook_path: str, cell_index: int) -> Dict[str, Any]:
-    """특정 셀을 실행합니다."""
+@mcp.tool(
+    description="노트북의 특정 셀을 실행합니다. 기존에 작성된 코드를 다시 실행하거나 결과를 갱신할 때 사용하세요.",
+    examples=[
+        "이전에 작성한 코드 다시 실행",
+        "데이터 변경 후 분석 재실행",
+        "특정 셀만 독립적으로 실행"
+    ]
+)
+async def execute_cell(
+    notebook_path: str,  # 대상 노트북 경로
+    cell_index: int      # 실행할 셀의 인덱스 (0부터 시작)
+) -> Dict[str, Any]:
+    """
+    노트북의 특정 셀을 실행합니다.
+    
+    Args:
+        notebook_path: 대상 노트북 파일 경로
+        cell_index: 실행할 셀의 인덱스 (0부터 시작)
+    
+    Returns:
+        성공 시: {"success": True, "message": "실행_메시지", "code": "실행된_코드", "result": 실행_결과, "outputs": "출력_결과"}
+        실패 시: {"success": False, "error": "에러_메시지"}
+    """
     return await client.execute_cell_simple(notebook_path, cell_index)
 
-@mcp.tool()
-async def add_and_execute_cell(notebook_path: str, content: str) -> Dict[str, Any]:
-    """셀을 추가하고 바로 실행합니다."""
+@mcp.tool(
+    description="노트북에 새로운 코드 셀을 추가하고 즉시 실행합니다. 데이터 분석이나 실험을 빠르게 진행할 때 가장 유용합니다.",
+    examples=[
+        "데이터 로딩 및 즉시 확인",
+        "새로운 분석 코드 작성 및 실행",
+        "실험 결과 즉시 확인",
+        "빠른 계산 및 시각화"
+    ]
+)
+async def add_and_execute_cell(
+    notebook_path: str,  # 대상 노트북 경로
+    content: str         # 실행할 코드 내용
+) -> Dict[str, Any]:
+    """
+    노트북에 새로운 코드 셀을 추가하고 즉시 실행합니다.
+    
+    Args:
+        notebook_path: 대상 노트북 파일 경로
+        content: 추가하고 실행할 코드 내용
+    
+    Returns:
+        성공 시: {"success": True, "message": "처리_메시지", "add_result": 추가_결과, "execute_result": 실행_결과}
+        실패 시: {"success": False, "error": "에러_메시지"}
+    """
     return await client.add_and_execute_cell(notebook_path, content)
 
-@mcp.tool()
+@mcp.tool(
+    description="JupyterHub MCP 서버의 현재 상태와 설정 정보를 확인합니다. 연결 문제가 있거나 서버 상태를 점검할 때 사용하세요.",
+    examples=[
+        "서버 연결 상태 확인",
+        "사용 가능한 기능 목록 확인",
+        "설정 정보 점검"
+    ]
+)
 def get_server_status() -> Dict[str, Any]:
-    """서버 상태를 확인합니다."""
+    """
+    서버 상태를 확인합니다.
+    
+    Returns:
+        서버 상태 정보: {"status": "상태", "version": "버전", "tools": ["도구_목록"], "config": {"설정_정보"}}
+    """
     return {
         "status": "running",
         "version": "3.0.0-clean",
@@ -421,32 +552,70 @@ def get_help() -> str:
     return f"""
 # JupyterHub MCP Server v3.0.0 (Clean)
 
-## 핵심 도구 (6개)
+## 핵심 도구 (6개) - 상세 설명
 
-### 노트북 관리
-- `create_notebook(name, path)` - 노트북 생성
-- `list_notebooks(path)` - 노트북 목록
-- `get_notebook_content(notebook_path)` - 노트북 내용 조회
+### 📓 노트북 관리
+- **create_notebook(name, path)** - 새 노트북 생성
+  * 새로운 분석 프로젝트 시작할 때
+  * 실험이나 연구 문서화할 때
+  * 예: create_notebook("sales_analysis", "projects/")
 
-### 셀 작업  
-- `add_cell(notebook_path, content, cell_type)` - 셀 추가만
-- `execute_cell(notebook_path, cell_index)` - 셀 실행만
-- `add_and_execute_cell(notebook_path, content)` - 셀 추가+실행
+- **list_notebooks(path)** - 노트북 목록 조회
+  * 기존 작업 파일들 찾을 때
+  * 프로젝트 현황 파악할 때
+  * 예: list_notebooks("projects/")
 
-## 사용 예시
+- **get_notebook_content(notebook_path)** - 노트북 내용 조회
+  * 이전 작업 내용 확인할 때
+  * 특정 셀의 코드나 결과 검토할 때
+  * 예: get_notebook_content("analysis.ipynb")
 
+### 📝 셀 작업
+- **add_cell(notebook_path, content, cell_type)** - 셀 추가만
+  * 코드를 미리 준비해두고 나중에 실행할 때
+  * 마크다운 문서화 셀 추가할 때
+  * 예: add_cell("test.ipynb", "# 데이터 분석", "markdown")
+
+- **execute_cell(notebook_path, cell_index)** - 특정 셀 실행
+  * 기존 코드를 다시 실행할 때
+  * 데이터 변경 후 결과 갱신할 때
+  * 예: execute_cell("test.ipynb", 0)
+
+- **add_and_execute_cell(notebook_path, content)** - 셀 추가+실행 ⭐
+  * 새로운 분석 코드 작성하고 바로 확인할 때
+  * 데이터 탐색하면서 빠르게 실험할 때
+  * 가장 많이 사용되는 핵심 기능!
+  * 예: add_and_execute_cell("test.ipynb", "df.head()")
+
+## 🚀 사용 패턴
+
+### 1. 새 프로젝트 시작
 ```python
-# 노트북 생성
-create_notebook("test")
+# 1. 노트북 생성
+create_notebook("my_analysis")
 
-# 셀 추가하고 실행
-add_and_execute_cell("test.ipynb", "result = 1 + 1\\nprint(f'Result: {{result}}')")
+# 2. 데이터 로딩하고 즉시 확인
+add_and_execute_cell("my_analysis.ipynb", "import pandas as pd\\ndf = pd.read_csv('data.csv')\\nprint(df.shape)")
 
-# 기존 셀 실행
-execute_cell("test.ipynb", 0)
+# 3. 기본 탐색
+add_and_execute_cell("my_analysis.ipynb", "df.head()")
+```
+
+### 2. 기존 작업 이어하기
+```python
+# 1. 노트북 목록 확인
+list_notebooks()
+
+# 2. 내용 검토
+get_notebook_content("existing_analysis.ipynb")
+
+# 3. 새로운 분석 추가
+add_and_execute_cell("existing_analysis.ipynb", "df.describe()")
 ```
 
 Config: {JUPYTERHUB_CONFIG['hub_url']} | {JUPYTERHUB_CONFIG['username']}
+
+💡 **팁**: add_and_execute_cell()을 가장 많이 사용하게 될 것입니다!
 """
 
 if __name__ == "__main__":
@@ -464,6 +633,7 @@ if __name__ == "__main__":
     print("  🔧 Simplified WebSocket (removed)")
     print("  ⚡ Safe local execution")
     print("  📊 Cleaner error handling")
+    print("  📝 Detailed tool descriptions added")
     
     print("\n📡 Starting clean server...")
     mcp.run(transport="sse", host=SERVER_HOST, port=SERVER_PORT)
