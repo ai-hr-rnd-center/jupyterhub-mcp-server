@@ -267,9 +267,9 @@ class SimpleJupyterHubClient:
                 
         except Exception as e:
             return {"success": False, "error": str(e)}
-    
+        
     async def _safe_execute(self, code: str) -> Dict[str, Any]:
-        """안전한 코드 실행"""
+        """안전한 코드 실행 - import 지원"""
         import sys
         import io
         import contextlib
@@ -279,24 +279,68 @@ class SimpleJupyterHubClient:
             old_stdout = sys.stdout
             captured_output = io.StringIO()
             
-            # 안전한 네임스페이스
+            # 안전한 네임스페이스 - import 추가
             namespace = {
                 '__name__': '__main__',
                 '__builtins__': {
+                    # 기본 내장 함수들
                     'print': print, 'len': len, 'range': range, 'sum': sum,
                     'max': max, 'min': min, 'abs': abs, 'round': round,
                     'sorted': sorted, 'list': list, 'dict': dict, 'set': set,
                     'tuple': tuple, 'str': str, 'int': int, 'float': float,
-                    'bool': bool, 'type': type, 'isinstance': isinstance
+                    'bool': bool, 'type': type, 'isinstance': isinstance,
+                    'enumerate': enumerate, 'zip': zip, 'map': map, 'filter': filter,
+                    
+                    # import 관련 추가
+                    '__import__': __import__,  # 핵심: import 기능 활성화
+                    'ImportError': ImportError,  # 에러 처리용
+                    'ModuleNotFoundError': ModuleNotFoundError,  # 에러 처리용
+                    
+                    # 예외 처리
+                    'Exception': Exception,
+                    'ValueError': ValueError,
+                    'TypeError': TypeError,
+                    'KeyError': KeyError,
+                    'IndexError': IndexError,
                 }
             }
             
-            # 안전한 수학 라이브러리
-            try:
-                import math
-                namespace['math'] = math
-            except:
-                pass
+            # 안전한 라이브러리들 미리 로드 (선택사항)
+            safe_modules = {
+                'math': None,
+                'random': None,
+                'datetime': None,
+                'json': None,
+                'os': None,  # 주의: os는 보안상 위험할 수 있음
+                'sys': None,
+                'time': None,
+                'collections': None,
+                'itertools': None,
+                'functools': None,
+                'operator': None,
+                'statistics': None,
+                'decimal': None,
+                'fractions': None,
+                'pathlib': None,
+                'uuid': None,
+                'hashlib': None,
+                'base64': None,
+                'urllib': None,
+                'requests': None,  # 외부 라이브러리
+                'numpy': None,     # 데이터 과학용
+                'pandas': None,    # 데이터 과학용
+                'matplotlib': None,# 시각화용
+                'seaborn': None,   # 시각화용
+                'sklearn': None,   # 머신러닝용
+                'scipy': None,     # 과학 계산용
+            }
+            
+            # 사용 가능한 모듈들을 미리 체크하고 로드
+            for module_name in safe_modules:
+                try:
+                    namespace[module_name] = __import__(module_name)
+                except ImportError:
+                    pass  # 모듈이 없으면 무시
             
             result = None
             
@@ -309,7 +353,7 @@ class SimpleJupyterHubClient:
                     lines = code.strip().split('\n')
                     last_line = lines[-1].strip()
                     if last_line and not any(last_line.startswith(kw) for kw in 
-                                           ['print', 'import', 'from', 'def', 'class', 'if', 'for', 'while', 'try', 'with']):
+                                        ['print', 'import', 'from', 'def', 'class', 'if', 'for', 'while', 'try', 'with']):
                         try:
                             result = eval(last_line, namespace)
                         except:
@@ -336,6 +380,7 @@ class SimpleJupyterHubClient:
             }
         finally:
             sys.stdout = old_stdout
+                
     
     async def add_and_execute_cell(self, notebook_path: str, content: str) -> Dict[str, Any]:
         """셀 추가 + 실행"""
