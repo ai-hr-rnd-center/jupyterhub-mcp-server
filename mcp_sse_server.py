@@ -122,8 +122,24 @@ class JupyterHubClient:
                 if kernels:
                     self.kernel_id = kernels[0]["id"]
                     self.kernel_url = f"{server_url}/api/kernels/{self.kernel_id}"
+                    
+                    # 기존 커널을 사용할 때도 WebSocket URL 설정
+                    ws_url = f"{server_url}/api/kernels/{self.kernel_id}/channels"
+                    parsed_url = urllib.parse.urlparse(ws_url)
+                    ws_protocol = "wss" if parsed_url.scheme == "https" else "ws"
+                    self.ws_url = f"{ws_protocol}://{parsed_url.netloc}{parsed_url.path}"
+                    
                     logger.info(f"Using existing kernel: {self.kernel_id}")
-                    return self.kernel_id
+                    logger.info(f"WebSocket URL: {self.ws_url}")
+                    
+                    # WebSocket 연결 확인/재연결
+                    if not self.ws or not self.ws_listener or not self.ws_listener.is_alive():
+                        if await self._connect_websocket():
+                            return self.kernel_id
+                        else:
+                            logger.warning("Failed to connect to existing kernel WebSocket")
+                    else:
+                        return self.kernel_id
             
             # 새 커널 생성
             kernel_spec = {"name": "python3"}
@@ -158,6 +174,10 @@ class JupyterHubClient:
     async def _connect_websocket(self) -> bool:
         """WebSocket 연결 설정 (jupyterhub_memory.py 기반)"""
         try:
+            if not self.ws_url:
+                logger.error("WebSocket URL is not set")
+                return False
+                        
             logger.info(f"Connecting to WebSocket: {self.ws_url}")
             
             # 인증 헤더 설정
@@ -170,6 +190,17 @@ class JupyterHubClient:
             # 쿠키 설정
             cookies = f"jupyterhub-user={self.username}; jupyterhub-hub-login={self.api_token}"
             
+            # 기존 WebSocket 정리
+            if self.ws:
+                try:
+                    self.ws.close()
+                except:
+                    pass
+            
+            if self.ws_listener and self.ws_listener.is_alive():
+                self.ws_stop_event.set()
+                self.ws_listener.join(timeout=2)
+                            
             # WebSocket 연결 (동기 방식이므로 스레드에서 실행)
             def connect_ws():
                 try:
