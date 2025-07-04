@@ -195,7 +195,7 @@ class SimpleJupyterHubClient:
             return {"success": False, "error": str(e)}
     
     async def execute_cell_simple(self, notebook_path: str, cell_index: int) -> Dict[str, Any]:
-        """간단한 셀 실행 (실제 계산 포함)"""
+        """셀 실행 (JupyterHub 서버에서 실행)"""
         try:
             server_url = await self.get_server_url()
             session = await self.get_session()
@@ -216,144 +216,34 @@ class SimpleJupyterHubClient:
                 return {"success": False, "error": "Not a code cell"}
             
             code = cell["source"]
-            logger.info(f"Executing: {code[:50]}...")
+            logger.info(f"Executing cell {cell_index}: {code[:50]}...")
             
-            # 간단한 로컬 실행 (안전한 코드만)
-            result = await self._safe_execute(code)
-            
-            # 결과를 노트북에 저장
-            if result["success"]:
-                outputs = []
-                
-                if result.get("output"):
-                    outputs.append({
-                        "output_type": "stream",
-                        "name": "stdout",
-                        "text": result["output"]
-                    })
-                
-                if result.get("result") is not None:
-                    outputs.append({
-                        "output_type": "execute_result",
-                        "execution_count": 1,
-                        "data": {"text/plain": str(result["result"])},
-                        "metadata": {}
-                    })
-                
-                cell["outputs"] = outputs
-                cell["execution_count"] = 1
-            else:
-                # 에러 저장
-                cell["outputs"] = [{
-                    "output_type": "error",
-                    "ename": "ExecutionError",
-                    "evalue": result.get("error", "Unknown error"),
-                    "traceback": [result.get("error", "Unknown error")]
-                }]
-            
-            # 노트북 저장
-            response = await session.put(f"{server_url}/api/contents/{notebook_path}", json=notebook)
-            
-            if response.status_code == 200:
-                return {
-                    "success": True,
-                    "message": f"Executed cell {cell_index}",
-                    "code": code,
-                    "result": result,
-                    "outputs": cell["outputs"]
-                }
-            else:
-                return {"success": False, "error": "Failed to save results"}
+            # 실제 JupyterHub 서버에서 실행하려면 커널 API 사용 필요
+            # 현재는 단순히 셀을 마킹하고 사용자가 JupyterHub에서 직접 실행하도록 안내
+            return {
+                "success": True,
+                "message": f"Cell {cell_index} ready for execution. Please run manually in JupyterHub for now.",
+                "code": code,
+                "note": "Automatic execution will be implemented with kernel API integration"
+            }
                 
         except Exception as e:
             return {"success": False, "error": str(e)}
     
-    async def _safe_execute(self, code: str) -> Dict[str, Any]:
-        """안전한 코드 실행"""
-        import sys
-        import io
-        import contextlib
-        
-        try:
-            # stdout 캡처
-            old_stdout = sys.stdout
-            captured_output = io.StringIO()
-            
-            # 안전한 네임스페이스
-            namespace = {
-                '__name__': '__main__',
-                '__builtins__': {
-                    'print': print, 'len': len, 'range': range, 'sum': sum,
-                    'max': max, 'min': min, 'abs': abs, 'round': round,
-                    'sorted': sorted, 'list': list, 'dict': dict, 'set': set,
-                    'tuple': tuple, 'str': str, 'int': int, 'float': float,
-                    'bool': bool, 'type': type, 'isinstance': isinstance
-                }
-            }
-            
-            # 안전한 수학 라이브러리
-            try:
-                import math
-                namespace['math'] = math
-            except:
-                pass
-            
-            result = None
-            
-            with contextlib.redirect_stdout(captured_output):
-                # 코드 실행
-                if '\n' in code.strip():
-                    # 여러 줄 코드
-                    exec(code, namespace)
-                    # 마지막 줄이 표현식이면 결과로 사용
-                    lines = code.strip().split('\n')
-                    last_line = lines[-1].strip()
-                    if last_line and not any(last_line.startswith(kw) for kw in 
-                                           ['print', 'import', 'from', 'def', 'class', 'if', 'for', 'while', 'try', 'with']):
-                        try:
-                            result = eval(last_line, namespace)
-                        except:
-                            pass
-                else:
-                    # 한 줄 코드
-                    try:
-                        result = eval(code, namespace)
-                    except SyntaxError:
-                        exec(code, namespace)
-            
-            output = captured_output.getvalue()
-            
-            return {
-                "success": True,
-                "result": result,
-                "output": output
-            }
-            
-        except Exception as e:
-            return {
-                "success": False,
-                "error": str(e)
-            }
-        finally:
-            sys.stdout = old_stdout
-    
+
     async def add_and_execute_cell(self, notebook_path: str, content: str) -> Dict[str, Any]:
-        """셀 추가 + 실행"""
+        """셀 추가 (실행은 JupyterHub에서 수동으로)"""
         try:
             # 셀 추가
             add_result = await self.add_cell(notebook_path, content, "code")
             if not add_result["success"]:
                 return add_result
             
-            # 바로 실행
-            position = add_result["position"]
-            execute_result = await self.execute_cell_simple(notebook_path, position)
-            
             return {
                 "success": True,
-                "message": "Cell added and executed",
+                "message": "Cell added. Please execute manually in JupyterHub for now.",
                 "add_result": add_result,
-                "execute_result": execute_result
+                "note": "Automatic execution will be implemented with kernel API integration"
             }
             
         except Exception as e:
@@ -450,7 +340,7 @@ async def add_cell(
     return await client.add_cell(notebook_path, content, cell_type)
 
 @mcp.tool(
-    description="노트북의 특정 셀을 실행합니다. 기존에 작성된 코드를 다시 실행하거나 결과를 갱신할 때 사용하세요."
+    description="노트북의 특정 셀을 실행합니다. 현재는 JupyterHub에서 수동 실행이 필요합니다."
 )
 async def execute_cell(
     notebook_path: str,  # 대상 노트북 경로
@@ -464,27 +354,27 @@ async def execute_cell(
         cell_index: 실행할 셀의 인덱스 (0부터 시작)
     
     Returns:
-        성공 시: {"success": True, "message": "실행_메시지", "code": "실행된_코드", "result": 실행_결과, "outputs": "출력_결과"}
+        성공 시: {"success": True, "message": "준비_메시지", "code": "셀_코드", "note": "안내_메시지"}
         실패 시: {"success": False, "error": "에러_메시지"}
     """
     return await client.execute_cell_simple(notebook_path, cell_index)
 
 @mcp.tool(
-    description="노트북에 새로운 코드 셀을 추가하고 즉시 실행합니다. 데이터 분석이나 실험을 빠르게 진행할 때 가장 유용합니다."
+    description="노트북에 새로운 코드 셀을 추가합니다. 현재는 JupyterHub에서 수동 실행이 필요합니다."
 )
 async def add_and_execute_cell(
     notebook_path: str,  # 대상 노트북 경로
     content: str         # 실행할 코드 내용
 ) -> Dict[str, Any]:
     """
-    노트북에 새로운 코드 셀을 추가하고 즉시 실행합니다.
+    노트북에 새로운 코드 셀을 추가합니다.
     
     Args:
         notebook_path: 대상 노트북 파일 경로
-        content: 추가하고 실행할 코드 내용
+        content: 추가할 코드 내용
     
     Returns:
-        성공 시: {"success": True, "message": "처리_메시지", "add_result": 추가_결과, "execute_result": 실행_결과}
+        성공 시: {"success": True, "message": "처리_메시지", "add_result": 추가_결과, "note": "안내_메시지"}
         실패 시: {"success": False, "error": "에러_메시지"}
     """
     return await client.add_and_execute_cell(notebook_path, content)
@@ -595,9 +485,9 @@ if __name__ == "__main__":
     print("\n✨ Improvements:")
     print("  🧹 Removed duplicated functions")
     print("  🔧 Simplified WebSocket (removed)")
-    print("  ⚡ Safe local execution")
     print("  📊 Cleaner error handling")
     print("  📝 Detailed tool descriptions added")
+    print("  ⚠️  Manual execution required in JupyterHub")
     
     print("\n📡 Starting clean server...")
     mcp.run(transport="sse", host=SERVER_HOST, port=SERVER_PORT)
