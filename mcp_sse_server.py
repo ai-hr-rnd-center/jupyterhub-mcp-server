@@ -4,6 +4,11 @@ import time
 import logging
 import os
 import json
+import queue
+import threading
+import urllib.parse
+import websocket
+import ssl
 from typing import Dict, Any, List, Optional
 from dotenv import load_dotenv
 import httpx
@@ -22,7 +27,7 @@ SERVER_PORT = int(os.getenv("SERVER_PORT", "8000"))
 # FastMCP 서버 생성
 mcp = FastMCP(SERVER_NAME)
 
-# JupyterHub 설정 (환경에 맞게 수정)
+# JupyterHub 설정
 JUPYTERHUB_CONFIG = {
     "hub_url": os.getenv("JUPYTERHUB_URL", "http://localhost:8000"),
     "api_token": os.getenv("JUPYTERHUB_API_TOKEN", "your_api_token_here"),
@@ -30,7 +35,7 @@ JUPYTERHUB_CONFIG = {
 }
 
 class JupyterHubClient:
-    """JupyterHub API 클라이언트 (셀 실행 기능 추가)"""
+    """WebSocket 기반 실제 커널 통신을 지원하는 JupyterHub 클라이언트"""
     
     def __init__(self, hub_url: str, api_token: str, username: str):
         self.hub_url = hub_url.rstrip('/')
@@ -38,47 +43,63 @@ class JupyterHubClient:
         self.username = username
         self.session = None
         
+        # WebSocket 관련 (jupyterhub_memory.py에서 가져온 핵심 부분)
+        self.ws = None
+        self.ws_queue = queue.Queue()
+        self.ws_listener = None
+        self.ws_stop_event = threading.Event()
+        self.kernel_lock = threading.Lock()
+        
+        # 커널 정보
+        self.kernel_id = None
+        self.kernel_url = None
+        self.ws_url = None
+        self.execution_count = 0
+        
+        # 인증 헤더
+        self.headers = {
+            'Authorization': f'token {api_token}',
+            'Content-Type': 'application/json',
+            'X-JupyterHub-User': username,
+            'X-JupyterHub-API-Token': api_token
+        }
+        
     async def get_session(self):
         if not self.session:
             self.session = httpx.AsyncClient(
-                headers={"Authorization": f"token {self.api_token}"},
+                headers=self.headers,
                 timeout=30.0
             )
         return self.session
     
     async def get_user_server_url(self) -> str:
-        """사용자의 Jupyter 서버 URL 가져오기"""
+        """사용자 서버 URL 가져오기"""
         try:
             session = await self.get_session()
             
-            # JupyterHub API로 사용자 정보 조회
+            # 사용자 정보 확인
             response = await session.get(f"{self.hub_url}/hub/api/users/{self.username}")
             response.raise_for_status()
             user_info = response.json()
             
-            # 서버가 실행 중인지 확인
             if user_info.get("servers", {}).get(""):
                 server_url = f"{self.hub_url}/user/{self.username}"
                 return server_url
             else:
-                # 서버가 실행되지 않았다면 시작
                 await self.start_user_server()
                 return f"{self.hub_url}/user/{self.username}"
                 
         except Exception as e:
             logger.error(f"Error getting user server URL: {str(e)}")
-            # 시뮬레이션 모드로 폴백
             return f"{self.hub_url}/user/{self.username}"
     
     async def start_user_server(self) -> Dict[str, Any]:
         """사용자 서버 시작"""
         try:
             session = await self.get_session()
-            
             response = await session.post(f"{self.hub_url}/hub/api/users/{self.username}/server")
             
             if response.status_code in [201, 202]:
-                # 서버 시작 대기
                 await asyncio.sleep(5)
                 return {"success": True, "message": "User server started"}
             else:
@@ -88,13 +109,214 @@ class JupyterHubClient:
             logger.error(f"Error starting user server: {str(e)}")
             return {"success": False, "error": str(e)}
     
+    async def get_or_create_kernel(self) -> Optional[str]:
+        """커널 가져오기 또는 생성 (jupyterhub_memory.py 방식)"""
+        try:
+            server_url = await self.get_user_server_url()
+            session = await self.get_session()
+            
+            # 기존 커널 확인
+            response = await session.get(f"{server_url}/api/kernels")
+            if response.status_code == 200:
+                kernels = response.json()
+                if kernels:
+                    self.kernel_id = kernels[0]["id"]
+                    self.kernel_url = f"{server_url}/api/kernels/{self.kernel_id}"
+                    logger.info(f"Using existing kernel: {self.kernel_id}")
+                    return self.kernel_id
+            
+            # 새 커널 생성
+            kernel_spec = {"name": "python3"}
+            response = await session.post(f"{server_url}/api/kernels", json=kernel_spec)
+            
+            if response.status_code in [200, 201]:
+                kernel_info = response.json()
+                self.kernel_id = kernel_info["id"]
+                self.kernel_url = f"{server_url}/api/kernels/{self.kernel_id}"
+                
+                # WebSocket URL 설정
+                ws_url = f"{server_url}/api/kernels/{self.kernel_id}/channels"
+                parsed_url = urllib.parse.urlparse(ws_url)
+                ws_protocol = "wss" if parsed_url.scheme == "https" else "ws"
+                self.ws_url = f"{ws_protocol}://{parsed_url.netloc}{parsed_url.path}"
+                
+                logger.info(f"Created new kernel: {self.kernel_id}")
+                
+                # WebSocket 연결
+                if await self._connect_websocket():
+                    await asyncio.sleep(3)  # 커널 준비 대기
+                    return self.kernel_id
+                else:
+                    return None
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error getting/creating kernel: {str(e)}")
+            return None
+    
+    async def _connect_websocket(self) -> bool:
+        """WebSocket 연결 설정 (jupyterhub_memory.py 기반)"""
+        try:
+            logger.info(f"Connecting to WebSocket: {self.ws_url}")
+            
+            # 인증 헤더 설정
+            headers = [
+                f"Authorization: token {self.api_token}",
+                f"X-JupyterHub-User: {self.username}",
+                f"X-JupyterHub-API-Token: {self.api_token}"
+            ]
+            
+            # 쿠키 설정
+            cookies = f"jupyterhub-user={self.username}; jupyterhub-hub-login={self.api_token}"
+            
+            # WebSocket 연결 (동기 방식이므로 스레드에서 실행)
+            def connect_ws():
+                try:
+                    self.ws = websocket.create_connection(
+                        self.ws_url,
+                        header=headers,
+                        cookie=cookies,
+                        timeout=30
+                    )
+                    return True
+                except Exception as e:
+                    logger.error(f"WebSocket connection failed: {e}")
+                    return False
+            
+            # 비동기에서 동기 함수 실행
+            loop = asyncio.get_event_loop()
+            success = await loop.run_in_executor(None, connect_ws)
+            
+            if success:
+                # 메시지 큐 초기화
+                self.ws_queue = queue.Queue()
+                self.ws_stop_event.clear()
+                
+                # 리스너 스레드 시작
+                self.ws_listener = threading.Thread(target=self._ws_listener_thread)
+                self.ws_listener.daemon = True
+                self.ws_listener.start()
+                
+                logger.info("WebSocket connection established")
+                return True
+            else:
+                return False
+                
+        except Exception as e:
+            logger.error(f"Failed to connect WebSocket: {str(e)}")
+            return False
+    
+    def _ws_listener_thread(self):
+        """WebSocket 메시지 리스너 (jupyterhub_memory.py에서 가져옴)"""
+        try:
+            while not self.ws_stop_event.is_set():
+                try:
+                    msg = self.ws.recv()
+                    if msg:
+                        self.ws_queue.put(json.loads(msg))
+                except websocket.WebSocketTimeoutException:
+                    continue
+                except websocket.WebSocketConnectionClosedException:
+                    break
+        except Exception as e:
+            logger.error(f"WebSocket listener error: {str(e)}")
+    
+    def _send_execute_request(self, code: str) -> str:
+        """코드 실행 요청 전송 (jupyterhub_memory.py 방식)"""
+        msg_id = f"exec_{time.time()}"
+        
+        header = {
+            'msg_id': msg_id,
+            'username': self.username,
+            'session': f"session_{time.time()}",
+            'msg_type': 'execute_request',
+            'version': '5.0'
+        }
+        
+        content = {
+            'code': code,
+            'silent': False,
+            'store_history': True,
+            'user_expressions': {},
+            'allow_stdin': False,
+            'stop_on_error': True
+        }
+        
+        msg = {
+            'header': header,
+            'parent_header': {},
+            'metadata': {},
+            'content': content,
+            'channel': 'shell',
+            'buffers': []
+        }
+        
+        self.ws.send(json.dumps(msg))
+        return msg_id
+    
+    def _collect_execution_results(self, msg_id: str, timeout: int = 30) -> List[Dict]:
+        """실행 결과 수집 (jupyterhub_memory.py 방식)"""
+        outputs = []
+        start_time = time.time()
+        is_idle = False
+        
+        while not is_idle and time.time() - start_time < timeout:
+            try:
+                msg = self.ws_queue.get(timeout=1)
+                
+                parent_msg_id = msg.get('parent_header', {}).get('msg_id', '')
+                if parent_msg_id != msg_id:
+                    continue
+                
+                msg_type = msg.get('header', {}).get('msg_type', '')
+                content = msg.get('content', {})
+                
+                if msg_type == 'status' and content.get('execution_state') == 'idle':
+                    is_idle = True
+                    continue
+                
+                # 출력 처리
+                if msg_type == 'stream':
+                    outputs.append({
+                        "output_type": "stream",
+                        "name": content.get('name', 'stdout'),
+                        "text": content.get('text', '')
+                    })
+                elif msg_type == 'execute_result':
+                    self.execution_count = content.get('execution_count', self.execution_count + 1)
+                    outputs.append({
+                        "output_type": "execute_result",
+                        "execution_count": self.execution_count,
+                        "data": content.get('data', {}),
+                        "metadata": content.get('metadata', {})
+                    })
+                elif msg_type == 'display_data':
+                    outputs.append({
+                        "output_type": "display_data",
+                        "data": content.get('data', {}),
+                        "metadata": content.get('metadata', {})
+                    })
+                elif msg_type == 'error':
+                    outputs.append({
+                        "output_type": "error",
+                        "ename": content.get('ename', 'Error'),
+                        "evalue": content.get('evalue', ''),
+                        "traceback": content.get('traceback', [])
+                    })
+                
+            except queue.Empty:
+                continue
+        
+        return outputs
+    
+    # 기존 메서드들 유지하되 실행 부분만 개선
     async def create_notebook(self, notebook_name: str, path: str = "") -> Dict[str, Any]:
         """새 노트북 생성"""
         try:
             server_url = await self.get_user_server_url()
             session = await self.get_session()
             
-            # 노트북 생성 API 호출
             full_path = f"{path}/{notebook_name}" if path else notebook_name
             if not full_path.endswith('.ipynb'):
                 full_path += '.ipynb'
@@ -129,46 +351,37 @@ class JupyterHubClient:
             return {"success": False, "error": str(e)}
     
     async def add_cell(self, notebook_path: str, content: str, cell_type: str = "code", position: int = -1) -> Dict[str, Any]:
-        """노트북에 셀 추가 (개선된 버전)"""
+        """노트북에 셀 추가"""
         try:
             server_url = await self.get_user_server_url()
             session = await self.get_session()
             
-            # 먼저 노트북 내용 가져오기
             response = await session.get(f"{server_url}/api/contents/{notebook_path}")
-            
             if response.status_code != 200:
                 return {"success": False, "error": f"Notebook not found: {notebook_path}"}
             
             notebook = response.json()
             cells = notebook["content"]["cells"]
             
-            # 셀 내용 정규화 (중요한 수정!)
-            if isinstance(content, str):
-                # 문자열을 그대로 사용 (Jupyter는 문자열도 받아들임)
-                cell_source = content
-            else:
-                cell_source = str(content)
+            # 셀 내용 정규화
+            cell_source = content
             
-            # 새 셀 생성
             new_cell = {
                 "cell_type": cell_type,
                 "metadata": {},
-                "source": cell_source  # 문자열 그대로 사용
+                "source": cell_source
             }
             
             if cell_type == "code":
                 new_cell["outputs"] = []
                 new_cell["execution_count"] = None
             
-            # 셀 추가
             if position == -1 or position >= len(cells):
                 cells.append(new_cell)
                 position = len(cells) - 1
             else:
                 cells.insert(position, new_cell)
             
-            # 노트북 업데이트
             response = await session.put(
                 f"{server_url}/api/contents/{notebook_path}",
                 json=notebook
@@ -189,119 +402,96 @@ class JupyterHubClient:
             logger.error(f"Error adding cell: {str(e)}")
             return {"success": False, "error": str(e)}
     
-    async def execute_cell(self, notebook_path: str, cell_index: int) -> Dict[str, Any]:
-        """셀 실행 (수정된 버전 - 올바른 Jupyter API 사용)"""
+    async def execute_cell_with_websocket(self, notebook_path: str, cell_index: int) -> Dict[str, Any]:
+        """WebSocket을 통한 실제 셀 실행"""
         try:
-            server_url = await self.get_user_server_url()
-            session = await self.get_session()
-            
-            # 노트북 내용 가져오기
-            response = await session.get(f"{server_url}/api/contents/{notebook_path}")
-            if response.status_code != 200:
-                return {"success": False, "error": f"Notebook not found: {notebook_path}"}
-            
-            notebook = response.json()
-            cells = notebook["content"]["cells"]
-            
-            if cell_index >= len(cells):
-                return {"success": False, "error": f"Cell index {cell_index} out of range"}
-            
-            cell = cells[cell_index]
-            if cell["cell_type"] != "code":
-                return {"success": False, "error": "Can only execute code cells"}
-            
-            # 커널 확인/생성
-            kernels_response = await session.get(f"{server_url}/api/kernels")
-            kernel_id = None
-            
-            if kernels_response.status_code == 200:
-                kernels = kernels_response.json()
-                if kernels:
-                    kernel_id = kernels[0]["id"]
-            
-            # 커널이 없으면 생성
-            if not kernel_id:
-                kernel_response = await session.post(f"{server_url}/api/kernels", json={"name": "python3"})
-                if kernel_response.status_code in [200, 201]:
-                    kernel_id = kernel_response.json()["id"]
-                    await asyncio.sleep(2)  # 커널 시작 대기
+            with self.kernel_lock:
+                server_url = await self.get_user_server_url()
+                session = await self.get_session()
+                
+                # 노트북 내용 가져오기
+                response = await session.get(f"{server_url}/api/contents/{notebook_path}")
+                if response.status_code != 200:
+                    return {"success": False, "error": f"Notebook not found: {notebook_path}"}
+                
+                notebook = response.json()
+                cells = notebook["content"]["cells"]
+                
+                if cell_index >= len(cells):
+                    return {"success": False, "error": f"Cell index {cell_index} out of range"}
+                
+                cell = cells[cell_index]
+                if cell["cell_type"] != "code":
+                    return {"success": False, "error": "Can only execute code cells"}
+                
+                # 커널 확인/생성
+                kernel_id = await self.get_or_create_kernel()
+                if not kernel_id:
+                    return {"success": False, "error": "Failed to get kernel"}
+                
+                # WebSocket이 연결되어 있는지 확인
+                if not self.ws or not self.ws_listener or not self.ws_listener.is_alive():
+                    if not await self._connect_websocket():
+                        return {"success": False, "error": "Failed to connect WebSocket"}
+                
+                # 코드 실행
+                code = cell["source"]
+                logger.info(f"Executing code via WebSocket: {code[:100]}...")
+                
+                # 동기 함수를 비동기에서 실행
+                def execute_sync():
+                    msg_id = self._send_execute_request(code)
+                    return self._collect_execution_results(msg_id, timeout=30)
+                
+                loop = asyncio.get_event_loop()
+                outputs = await loop.run_in_executor(None, execute_sync)
+                
+                # 결과를 노트북에 저장
+                cell["outputs"] = outputs
+                if outputs:
+                    for output in outputs:
+                        if output.get("output_type") == "execute_result":
+                            cell["execution_count"] = output.get("execution_count")
+                            break
+                    else:
+                        cell["execution_count"] = self.execution_count
+                
+                # 노트북 저장
+                save_response = await session.put(
+                    f"{server_url}/api/contents/{notebook_path}",
+                    json=notebook
+                )
+                
+                if save_response.status_code == 200:
+                    return {
+                        "success": True,
+                        "message": f"Cell {cell_index} executed successfully via WebSocket",
+                        "code": code,
+                        "outputs": outputs,
+                        "execution_count": cell.get("execution_count")
+                    }
                 else:
-                    return {"success": False, "error": "Failed to create kernel"}
-            
-            # 코드 가져오기
-            code = cell["source"]
-            
-            # 간단한 실행 시뮬레이션 (실제 WebSocket 없이)
-            # JupyterHub에서는 execute API가 WebSocket을 통해 이루어지므로
-            # 여기서는 실행했다고 가정하고 결과를 시뮬레이션합니다.
-            
-            logger.info(f"Simulating execution of code: {code[:100]}...")
-            
-            # 실행 결과 시뮬레이션
-            execution_count = getattr(self, '_execution_count', 0) + 1
-            self._execution_count = execution_count
-            
-            # 간단한 코드 평가 시도 (안전한 것만)
-            simulated_result = None
-            try:
-                # 매우 간단한 수학 계산만 실제 실행
-                if code.strip() and all(c in "0123456789+-*/.()\n " for c in code.strip()):
-                    simulated_result = str(eval(code.strip()))
-                else:
-                    simulated_result = f"Code executed: {code.strip()[:50]}..."
-            except:
-                simulated_result = f"Code executed: {code.strip()[:50]}..."
-            
-            outputs = [{
-                "output_type": "execute_result",
-                "execution_count": execution_count,
-                "data": {
-                    "text/plain": simulated_result
-                },
-                "metadata": {}
-            }]
-            
-            # 셀에 결과 저장
-            cell["outputs"] = outputs
-            cell["execution_count"] = execution_count
-            
-            # 노트북 저장
-            save_response = await session.put(
-                f"{server_url}/api/contents/{notebook_path}",
-                json=notebook
-            )
-            
-            if save_response.status_code == 200:
-                return {
-                    "success": True,
-                    "message": f"Cell {cell_index} executed and saved",
-                    "code": code,
-                    "outputs": outputs,
-                    "execution_count": execution_count,
-                    "result": simulated_result
-                }
-            else:
-                return {"success": False, "error": "Failed to save execution results"}
+                    return {"success": False, "error": "Failed to save execution results"}
                 
         except Exception as e:
-            logger.error(f"Error executing cell: {str(e)}")
+            logger.error(f"Error executing cell with WebSocket: {str(e)}")
             return {"success": False, "error": str(e)}
     
-    async def add_and_execute_cell(self, notebook_path: str, content: str) -> Dict[str, Any]:
-        """셀 추가 후 바로 실행 (편의 함수)"""
+    async def add_and_execute_cell_with_websocket(self, notebook_path: str, content: str) -> Dict[str, Any]:
+        """셀 추가 후 WebSocket으로 실행"""
         try:
-            # 1. 셀 추가
+            # 셀 추가
             add_result = await self.add_cell(notebook_path, content, "code")
             if not add_result["success"]:
                 return add_result
             
-            # 2. 추가된 셀 실행
+            # 추가된 셀 실행
             position = add_result["position"]
-            execute_result = await self.execute_cell(notebook_path, position)
+            execute_result = await self.execute_cell_with_websocket(notebook_path, position)
             
             return {
                 "success": True,
-                "message": f"Cell added and executed successfully",
+                "message": f"Cell added and executed successfully via WebSocket",
                 "add_result": add_result,
                 "execute_result": execute_result,
                 "content": content,
@@ -309,7 +499,7 @@ class JupyterHubClient:
             }
             
         except Exception as e:
-            logger.error(f"Error in add_and_execute_cell: {str(e)}")
+            logger.error(f"Error in add_and_execute_cell_with_websocket: {str(e)}")
             return {"success": False, "error": str(e)}
     
     # 기존 메서드들 유지
@@ -496,8 +686,23 @@ class JupyterHubClient:
             return {"success": False, "error": str(e)}
     
     async def close(self):
-        if self.session:
-            await self.session.aclose()
+        """리소스 정리"""
+        try:
+            if hasattr(self, 'ws_stop_event'):
+                self.ws_stop_event.set()
+            
+            if hasattr(self, 'ws_listener') and self.ws_listener and self.ws_listener.is_alive():
+                self.ws_listener.join(timeout=2)
+            
+            if hasattr(self, 'ws') and self.ws:
+                self.ws.close()
+            
+            if self.session:
+                await self.session.aclose()
+                
+        except Exception as e:
+            logger.error(f"Error during cleanup: {str(e)}")
+
 
 # JupyterHub 클라이언트 인스턴스
 jupyter_client = JupyterHubClient(**JUPYTERHUB_CONFIG)
@@ -506,6 +711,63 @@ jupyter_client = JupyterHubClient(**JUPYTERHUB_CONFIG)
 # MCP 도구들 (기존 + 새로운 기능)
 # =============================================================================
 
+@mcp.tool()
+async def execute_cell_real(notebook_path: str, cell_index: int) -> Dict[str, Any]:
+    """WebSocket을 통한 실제 셀 실행 (jupyterhub_memory 방식)
+    
+    이 도구는 실제 JupyterHub 커널에서 코드를 실행하고 결과를 받아옵니다.
+    변수 상태가 유지되고 모든 Python 라이브러리를 사용할 수 있습니다.
+    """
+    return await jupyter_client.execute_cell_with_websocket(notebook_path, cell_index)
+
+@mcp.tool()
+async def add_and_execute_cell_real(notebook_path: str, content: str) -> Dict[str, Any]:
+    """셀 추가 후 WebSocket으로 실제 실행 (jupyterhub_memory 방식)
+    
+    이 도구를 사용하면:
+    - 실제 JupyterHub 환경에서 코드 실행
+    - 모든 Python 패키지 사용 가능
+    - 변수 상태 유지 (이전 셀에서 정의한 변수 사용 가능)
+    - 실제 Jupyter 출력 형식
+    """
+    return await jupyter_client.add_and_execute_cell_with_websocket(notebook_path, content)
+
+@mcp.tool()
+async def quick_calculation_real(notebook_name: str, expression: str) -> Dict[str, Any]:
+    """실제 JupyterHub 커널에서 빠른 계산 실행
+    
+    이 도구는 다음을 수행합니다:
+    1. 노트북 생성 (없으면)
+    2. 코드 셀 추가
+    3. WebSocket으로 실제 실행
+    4. 결과를 노트북에 저장
+    
+    복잡한 계산, 데이터 분석, 그래프 생성 등 모든 Python 코드가 실행 가능합니다.
+    """
+    try:
+        notebook_path = f"{notebook_name}.ipynb"
+        
+        # 노트북 생성 (존재하지 않으면)
+        content_result = await jupyter_client.get_notebook_content(notebook_path)
+        if not content_result.get("success"):
+            create_result = await jupyter_client.create_notebook(notebook_name)
+            if not create_result["success"]:
+                return create_result
+        
+        # 실제 실행
+        result = await jupyter_client.add_and_execute_cell_with_websocket(notebook_path, expression)
+        return {
+            "success": True,
+            "message": f"Real calculation completed: {expression}",
+            "notebook": notebook_path,
+            "expression": expression,
+            "result": result
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in quick_calculation_real: {str(e)}")
+        return {"success": False, "error": str(e)}
+        
 @mcp.tool()
 async def create_notebook(notebook_name: str, path: str = "") -> Dict[str, Any]:
     """새 Jupyter 노트북을 생성합니다.
