@@ -34,8 +34,8 @@ JUPYTERHUB_CONFIG = {
 # FastMCP 서버
 mcp = FastMCP(SERVER_NAME)
 
-class SimpleJupyterHubClient:
-    """간소화된 JupyterHub 클라이언트 - 핵심 기능만"""
+class JupyterHubClient:
+    """JupyterHub 클라이언트"""
     
     def __init__(self, hub_url: str, api_token: str, username: str):
         self.hub_url = hub_url.rstrip('/')
@@ -105,7 +105,7 @@ class SimpleJupyterHubClient:
             return {"success": False, "error": str(e)}
     
     async def list_notebooks(self, path: str = "") -> Dict[str, Any]:
-        """노트북 목록 (간소화)"""
+        """노트북 목록"""
         try:
             server_url = await self.get_server_url()
             session = await self.get_session()
@@ -196,7 +196,7 @@ class SimpleJupyterHubClient:
         except Exception as e:
             return {"success": False, "error": str(e)}
     
-    async def execute_cell_simple(self, notebook_path: str, cell_index: int) -> Dict[str, Any]:
+    async def execute_cell(self, notebook_path: str, cell_index: int) -> Dict[str, Any]:
         """간단한 셀 실행 (실제 계산 포함)"""
         try:
             server_url = await self.get_server_url()
@@ -271,7 +271,7 @@ class SimpleJupyterHubClient:
             return {"success": False, "error": str(e)}
             
     async def _safe_execute(self, code: str) -> Dict[str, Any]:
-        """최소한의 로컬 실행 (간단한 계산용) - 실제로는 JupyterHub kernel 사용 권장"""
+        """최소한의 로컬 실행"""
         import sys
         import io
         import contextlib
@@ -361,7 +361,7 @@ class SimpleJupyterHubClient:
             
             # 바로 실행
             position = add_result["position"]
-            execute_result = await self.execute_cell_simple(notebook_path, position)
+            execute_result = await self.execute_cell(notebook_path, position)
             
             return {
                 "success": True,
@@ -379,7 +379,7 @@ class SimpleJupyterHubClient:
             await self.session.aclose()
 
 # 클라이언트 인스턴스
-client = SimpleJupyterHubClient(**JUPYTERHUB_CONFIG)
+client = JupyterHubClient(**JUPYTERHUB_CONFIG)
 
 # =============================================================================
 # 핵심 MCP 도구들 (상세한 설명 추가)
@@ -481,7 +481,7 @@ async def execute_cell(
         성공 시: {"success": True, "message": "실행_메시지", "code": "실행된_코드", "result": 실행_결과, "outputs": "출력_결과"}
         실패 시: {"success": False, "error": "에러_메시지"}
     """
-    return await client.execute_cell_simple(notebook_path, cell_index)
+    return await client.execute_cell(notebook_path, cell_index)
 
 @mcp.tool(
     description="노트북에 새로운 코드 셀을 추가하고 즉시 실행합니다. 데이터 분석이나 실험을 빠르게 진행할 때 가장 유용합니다."
