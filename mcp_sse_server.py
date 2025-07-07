@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 import io
 import contextlib
 import httpx
+from python_code_checker import python_code_type_checker, _strip_ansi
 
 load_dotenv()
 
@@ -43,6 +44,9 @@ class JupyterHubClient:
         self.username = username
         self.session = None
         
+        self.python_code_type_checker = python_code_type_checker
+        self.strip_ansi = _strip_ansi     
+
     async def get_session(self):
         if not self.session:
             self.session = httpx.AsyncClient(
@@ -218,6 +222,17 @@ class JupyterHubClient:
                 return {"success": False, "error": "Not a code cell"}
             
             code = cell["source"]
+
+            try:
+                self.python_code_type_checker(code)
+            except ValueError as e:
+                return {
+                    "success": False,
+                    "error": f"Code validation failed: {str(e)}",
+                    "code": code,
+                    "validation_failed": True
+                }
+            
             logger.info(f"Executing: {code[:50]}...")
             
             # 간단한 로컬 실행 (안전한 코드만)
@@ -281,14 +296,7 @@ class JupyterHubClient:
             old_stdout = sys.stdout
             captured_output = io.StringIO()
             
-            # 기본적인 shell 명령어만 차단 (최소한의 안전장치)
-            if code.strip().startswith('!'):
-                return {
-                    "success": False,
-                    "error": "Shell commands (!cmd) are not supported in local execution. Use JupyterHub kernel for full functionality."
-                }
-            
-            # 기본 네임스페이스 (너무 제한적이지 않게)
+            # 기본 네임스페이스
             namespace = {
                 '__name__': '__main__',
                 '__builtins__': __builtins__,  # 기본 내장 함수들 모두 허용
@@ -335,10 +343,12 @@ class JupyterHubClient:
             
             output = captured_output.getvalue()
             
+            clean_output = self.strip_ansi(output)
+
             return {
                 "success": True,
                 "result": result,
-                "output": output,
+                "output": clean_output,
                 "note": "This is local execution for basic operations. For full Jupyter functionality, the code will be executed on JupyterHub kernel."
             }
             
@@ -354,6 +364,16 @@ class JupyterHubClient:
     async def add_and_execute_cell(self, notebook_path: str, content: str) -> Dict[str, Any]:
         """셀 추가 + 실행"""
         try:
+            try:
+                self.python_code_type_checker(content)
+            except ValueError as e:
+                return {
+                    "success": False,
+                    "error": f"Code validation failed: {str(e)}",
+                    "code": content,
+                    "validation_failed": True
+                }
+                        
             # 셀 추가
             add_result = await self.add_cell(notebook_path, content, "code")
             if not add_result["success"]:
