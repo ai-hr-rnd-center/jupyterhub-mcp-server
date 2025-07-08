@@ -26,7 +26,7 @@ SERVER_HOST = os.getenv("SERVER_HOST", "0.0.0.0")
 SERVER_PORT = int(os.getenv("SERVER_PORT", "8000"))
 
 # 기본 노트북 경로 (하드코딩)
-DEFAULT_NOTEBOOK = os.getenv("DEFAULT_NOTEBOOK", "kernel_workspace.ipynb")
+DEFAULT_NOTEBOOK = os.getenv("DEFAULT_NOTEBOOK", "session_notebook.ipynb")
 
 # JupyterHub 설정
 JUPYTERHUB_CONFIG = {
@@ -58,7 +58,54 @@ class JupyterHubClient:
             )
         return self.session
     
-    async def get_server_url(self) -> str:
+    async def ensure_default_notebook(self) -> bool:
+        """기본 노트북이 없으면 생성"""
+        try:
+            server_url = await self.get_server_url()
+            session = await self.get_session()
+            
+            # 노트북 존재 확인
+            response = await session.get(f"{server_url}/api/contents/{DEFAULT_NOTEBOOK}")
+            
+            if response.status_code == 200:
+                logger.info(f"Default notebook {DEFAULT_NOTEBOOK} already exists")
+                return True
+            
+            # 노트북이 없으면 생성
+            logger.info(f"Creating default notebook: {DEFAULT_NOTEBOOK}")
+            
+            notebook = {
+                "type": "notebook",
+                "content": {
+                    "cells": [],
+                    "metadata": {
+                        "kernelspec": {
+                            "display_name": "Python 3",
+                            "language": "python",
+                            "name": "python3"
+                        },
+                        "language_info": {
+                            "name": "python",
+                            "version": "3.8.0"
+                        }
+                    },
+                    "nbformat": 4,
+                    "nbformat_minor": 4
+                }
+            }
+            
+            response = await session.put(f"{server_url}/api/contents/{DEFAULT_NOTEBOOK}", json=notebook)
+            
+            if response.status_code in [200, 201]:
+                logger.info(f"Successfully created {DEFAULT_NOTEBOOK}")
+                return True
+            else:
+                logger.error(f"Failed to create {DEFAULT_NOTEBOOK}: {response.status_code}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error ensuring default notebook: {e}")
+            return False
         """사용자 서버 URL (서버 시작 포함)"""
         try:
             session = await self.get_session()
@@ -140,6 +187,16 @@ class JupyterHubClient:
     async def get_notebook_content(self) -> Dict[str, Any]:
         """기본 노트북 내용 조회 - 수정된 반환 타입"""
         try:
+            # 기본 노트북 존재 확인 및 생성
+            if not await self.ensure_default_notebook():
+                return {
+                    "success": False,
+                    "error": f"Failed to ensure default notebook: {DEFAULT_NOTEBOOK}",
+                    "cells": [],
+                    "count": 0,
+                    "notebook": DEFAULT_NOTEBOOK
+                }
+            
             server_url = await self.get_server_url()
             session = await self.get_session()
             
@@ -185,6 +242,14 @@ class JupyterHubClient:
     async def add_cell(self, content: str, cell_type: str = "code") -> Dict[str, Any]:
         """기본 노트북에 셀 추가 - 수정된 반환 타입"""
         try:
+            # 기본 노트북 존재 확인 및 생성
+            if not await self.ensure_default_notebook():
+                return {
+                    "success": False,
+                    "error": f"Failed to ensure default notebook: {DEFAULT_NOTEBOOK}",
+                    "position": -1
+                }
+            
             server_url = await self.get_server_url()
             session = await self.get_session()
             
@@ -241,6 +306,19 @@ class JupyterHubClient:
     async def execute_cell(self, cell_index: int) -> Dict[str, Any]:
         """기본 노트북의 특정 셀 실행 - 수정된 반환 타입"""
         try:
+            # 기본 노트북 존재 확인 및 생성
+            if not await self.ensure_default_notebook():
+                return {
+                    "success": False,
+                    "error": f"Failed to ensure default notebook: {DEFAULT_NOTEBOOK}",
+                    "outputs": [{
+                        "output_type": "error",
+                        "ename": "NotebookNotFound",
+                        "evalue": f"Failed to ensure default notebook: {DEFAULT_NOTEBOOK}",
+                        "traceback": [f"Failed to ensure default notebook: {DEFAULT_NOTEBOOK}"]
+                    }]
+                }
+            
             server_url = await self.get_server_url()
             session = await self.get_session()
             
