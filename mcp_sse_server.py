@@ -26,7 +26,7 @@ SERVER_HOST = os.getenv("SERVER_HOST", "0.0.0.0")
 SERVER_PORT = int(os.getenv("SERVER_PORT", "8000"))
 
 # 기본 노트북 경로 (하드코딩)
-DEFAULT_NOTEBOOK = os.getenv("DEFAULT_NOTEBOOK", "kernel_workspace.ipynb")
+DEFAULT_NOTEBOOK = os.getenv("DEFAULT_NOTEBOOK", "session_notebook.ipynb")
 
 # JupyterHub 설정
 JUPYTERHUB_CONFIG = {
