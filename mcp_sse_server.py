@@ -58,6 +58,29 @@ class JupyterHubClient:
             )
         return self.session
     
+    async def get_server_url(self) -> str:
+        """사용자 서버 URL (서버 시작 포함)"""
+        try:
+            session = await self.get_session()
+            
+            # 사용자 상태 확인
+            response = await session.get(f"{self.hub_url}/hub/api/users/{self.username}")
+            if response.status_code == 200:
+                user_info = response.json()
+                
+                # 서버가 없으면 시작
+                if not user_info.get("servers", {}).get(""):
+                    logger.info("Starting user server...")
+                    await session.post(f"{self.hub_url}/hub/api/users/{self.username}/server")
+                    await asyncio.sleep(5)
+                
+                return f"{self.hub_url}/user/{self.username}"
+                
+        except Exception as e:
+            logger.error(f"Server setup error: {e}")
+            
+        return f"{self.hub_url}/user/{self.username}"
+
     async def ensure_default_notebook(self) -> bool:
         """기본 노트북이 없으면 생성"""
         try:
