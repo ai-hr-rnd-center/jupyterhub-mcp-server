@@ -10,6 +10,7 @@ import io
 import contextlib
 import httpx
 from python_code_checker import python_code_type_checker, _strip_ansi
+from websocket_kernel_manager import WebSocketKernelManager, WebSocketExecutionAdapter
 
 load_dotenv()
 
@@ -49,6 +50,11 @@ class JupyterHubClient:
         
         self.python_code_type_checker = python_code_type_checker
         self.strip_ansi = _strip_ansi     
+
+        self.ws_manager = WebSocketKernelManager(
+            hub_url, username, api_token, logger
+        )
+        self.ws_adapter = WebSocketExecutionAdapter(self.ws_manager)
 
     async def get_session(self):
         if not self.session:
@@ -353,80 +359,7 @@ class JupyterHubClient:
             }
             
     async def _safe_execute(self, code: str) -> Dict[str, Any]:
-        """최소한의 로컬 실행"""
-        import sys
-        import io
-        import contextlib
-        
-        try:
-            # stdout 캡처
-            old_stdout = sys.stdout
-            captured_output = io.StringIO()
-            
-            # 기본 네임스페이스
-            namespace = {
-                '__name__': '__main__',
-                '__builtins__': __builtins__,  # 기본 내장 함수들 모두 허용
-            }
-            
-            # 자주 사용되는 모듈들 미리 로드
-            common_modules = ['math', 'random', 'datetime', 'json', 'time']
-            for module_name in common_modules:
-                try:
-                    namespace[module_name] = __import__(module_name)
-                except ImportError:
-                    pass
-            
-            # numpy, pandas도 있으면 로드
-            data_modules = ['numpy', 'pandas']
-            for module_name in data_modules:
-                try:
-                    namespace[module_name] = __import__(module_name)
-                except ImportError:
-                    pass
-            
-            result = None
-            
-            with contextlib.redirect_stdout(captured_output):
-                # 코드 실행
-                if '\n' in code.strip():
-                    # 여러 줄 코드
-                    exec(code, namespace)
-                    # 마지막 줄이 표현식이면 결과로 사용
-                    lines = code.strip().split('\n')
-                    last_line = lines[-1].strip()
-                    if last_line and not any(last_line.startswith(kw) for kw in 
-                                        ['print', 'import', 'from', 'def', 'class', 'if', 'for', 'while', 'try', 'with']):
-                        try:
-                            result = eval(last_line, namespace)
-                        except:
-                            pass
-                else:
-                    # 한 줄 코드
-                    try:
-                        result = eval(code, namespace)
-                    except SyntaxError:
-                        exec(code, namespace)
-            
-            output = captured_output.getvalue()
-            
-            clean_output = self.strip_ansi(output)
-
-            return {
-                "success": True,
-                "result": result,
-                "output": clean_output,
-                "note": "This is local execution for basic operations. For full Jupyter functionality, the code will be executed on JupyterHub kernel."
-            }
-            
-        except Exception as e:
-            return {
-                "success": False,
-                "error": str(e),
-                "note": "Local execution failed. The code will still be saved to the notebook for JupyterHub kernel execution."
-            }
-        finally:
-            sys.stdout = old_stdout
+        return await self.ws_adapter.safe_execute_websocket(code)
     
     async def execute_code(self, content: str) -> Dict[str, Any]:
         """코드 실행 (셀 추가 + 실행)"""
@@ -518,101 +451,31 @@ class JupyterHubClient:
             }
 
     async def get_kernel_globals(self, as_text: bool = False) -> Dict[str, Any]:
-        """실제 Jupyter 커널의 전역 변수 조회"""
-        
-        # globals() 조회를 위한 코드
-        globals_code = '''
-def _get_globals():
-    import json
-    import inspect
-    import builtins
-    from types import ModuleType
-
-    result = {}
-    builtin_names = dir(builtins)
-
-    # Jupyter environment variables
-    jupyter_vars = ['In', 'Out', 'exit', 'quit', 'get_ipython', 'display', 'original_ps1', 
-                'REPLHooks', 'get_last_command', 'PS1', '_', '_oh', '_dh', '_sh']
-
-    for k, v in globals().items():
-        # Skip builtins, private objects, modules, and Jupyter variables
-        if (k.startswith('_') or k in builtin_names or 
-            isinstance(v, ModuleType) or k in jupyter_vars):
-            continue
-            
+        """WebSocket을 통한 전역 변수 조회"""
         try:
-            # Include docstring for functions
-            if inspect.isfunction(v):
-                doc = v.__doc__
-                doc_summary = doc.split('\\n')[0].strip() if doc else ""
-                result[k] = [type(v).__name__, doc_summary]
-            # Include value for basic types
-            elif isinstance(v, (int, float, bool, str, type(None))):
-                result[k] = [type(v).__name__, v]
-            # Include length for collections
-            elif hasattr(v, '__len__'):
-                result[k] = [type(v).__name__, f"length: {len(v)}"]
-            # Include type only for other objects
-            else:
-                result[k] = [type(v).__name__, ""]
-        except:
-            # Handle errors
-            try:
-                result[k] = [type(v).__name__, ""]
-            except:
-                result[k] = ["unknown", ""]
-
-    print(json.dumps(result))
-
-_get_globals()
-'''
-        
-        try:
-            # 실제 커널에서 globals() 조회 코드 실행
-            execute_result = await self.execute_code(globals_code)
-            
-            if not execute_result["success"]:
-                return {
-                    "success": False,
-                    "error": "Failed to execute globals query",
-                    "variables": {} if not as_text else "",
-                    "count": 0
-                }
-            
-            # 실행 결과에서 JSON 출력 찾기
-            globals_data = {}
-            execute_outputs = execute_result.get("execute_result", {}).get("outputs", [])
-            
-            for output in execute_outputs:
-                if output.get("output_type") == "stream" and output.get("name") == "stdout":
-                    try:
-                        globals_data = json.loads(output.get("text", "{}"))
-                        break
-                    except json.JSONDecodeError:
-                        continue
+            globals_data = await self.ws_adapter.get_kernel_globals_websocket()
             
             if as_text:
                 return {
                     "success": True,
                     "variables": json.dumps(globals_data, ensure_ascii=False, indent=2),
                     "count": len(globals_data),
-                    "timestamp": time.time()
+                    "source": "websocket"
                 }
             else:
                 return {
                     "success": True,
                     "variables": globals_data,
                     "count": len(globals_data),
-                    "timestamp": time.time()
+                    "source": "websocket"
                 }
-                
         except Exception as e:
+            logger.error(f"전역 변수 조회 실패: {e}")
             return {
                 "success": False,
-                "error": str(e),
-                "variables": {} if not as_text else "",
-                "count": 0
+                "variables": "{}" if as_text else {},
+                "count": 0,
+                "error": str(e)
             }
         
     async def to_ai_history(self, exclude_empty: bool = True, max_output_length: int = 200) -> Dict[str, Any]:
