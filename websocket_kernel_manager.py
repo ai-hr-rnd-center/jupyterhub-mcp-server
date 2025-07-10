@@ -5,6 +5,7 @@ WebSocket 기반 JupyterHub 커널 매니저 (개선 버전)
 """
 
 import asyncio
+import os
 import websockets
 import json
 import time
@@ -14,6 +15,8 @@ import queue
 import requests
 from typing import Dict, Any, Optional
 import logging
+from dotenv import load_dotenv
+load_dotenv()
 
 class WebSocketKernelManager:
     """
@@ -361,10 +364,9 @@ class WebSocketExecutionAdapter:
 async def test_websocket_manager():
     """WebSocket 매니저 테스트"""
     
-    # 설정
-    HUB_URL = "http://13.124.0.18:8000"
-    USERNAME = "user4"
-    API_TOKEN = 'test-token'  # 토큰 설정
+    HUB_URL = os.getenv("JUPYTERHUB_URL", "http://localhost:8000")
+    USERNAME = os.getenv("JUPYTERHUB_USERNAME", "your_username")
+    API_TOKEN = os.getenv("JUPYTERHUB_API_TOKEN", "your_api_token_here")
     
     # 로깅 설정
     logging.basicConfig(level=logging.INFO, format='%(levelname)s:%(name)s:%(message)s')
