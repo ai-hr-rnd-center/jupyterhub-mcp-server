@@ -262,7 +262,7 @@ class WebSocketKernelManager:
         globals_code = '''
 import json
 import inspect
-import builtins
+import builtins 
 from types import ModuleType
 
 result = {}

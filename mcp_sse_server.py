@@ -136,31 +136,31 @@ class JupyterHubClient:
             logger.error(f"Error ensuring default notebook: {e}")
             return False
     
-    async def list_notebooks(self, path: str = "") -> Dict[str, Any]:
-        """노트북 목록"""
-        try:
-            server_url = await self.get_server_url()
-            session = await self.get_session()
+    # async def list_notebooks(self, path: str = "") -> Dict[str, Any]:
+    #     """노트북 목록"""
+    #     try:
+    #         server_url = await self.get_server_url()
+    #         session = await self.get_session()
             
-            response = await session.get(f"{server_url}/api/contents/{path}")
+    #         response = await session.get(f"{server_url}/api/contents/{path}")
             
-            if response.status_code == 200:
-                contents = response.json()
-                notebooks = []
+    #         if response.status_code == 200:
+    #             contents = response.json()
+    #             notebooks = []
                 
-                for item in contents.get("content", []):
-                    if item.get("type") == "notebook":
-                        notebooks.append({
-                            "name": item["name"],
-                            "path": item["path"]
-                        })
+    #             for item in contents.get("content", []):
+    #                 if item.get("type") == "notebook":
+    #                     notebooks.append({
+    #                         "name": item["name"],
+    #                         "path": item["path"]
+    #                     })
                 
-                return {"success": True, "notebooks": notebooks, "count": len(notebooks)}
-            else:
-                return {"success": False, "error": f"Failed: {response.status_code}"}
+    #             return {"success": True, "notebooks": notebooks, "count": len(notebooks)}
+    #         else:
+    #             return {"success": False, "error": f"Failed: {response.status_code}"}
                 
-        except Exception as e:
-            return {"success": False, "error": str(e)}
+    #     except Exception as e:
+    #         return {"success": False, "error": str(e)}
     
     
     async def add_cell(self, content: str, cell_type: str = "code") -> Dict[str, Any]:
@@ -358,6 +358,150 @@ class JupyterHubClient:
                 }]
             }
             
+    async def clear_notebook(self) -> Dict[str, Any]:
+        """현재 작업 노트북의 모든 셀 삭제"""
+        try:
+            # 기본 노트북 존재 확인
+            if not await self.ensure_default_notebook():
+                return {
+                    "success": False,
+                    "error": f"노트북을 찾을 수 없습니다: {DEFAULT_NOTEBOOK}",
+                    "cleared_cells": 0
+                }
+            
+            server_url = await self.get_server_url()
+            session = await self.get_session()
+            
+            # 노트북 가져오기
+            response = await session.get(f"{server_url}/api/contents/{DEFAULT_NOTEBOOK}")
+            if response.status_code != 200:
+                return {
+                    "success": False,
+                    "error": f"노트북 읽기 실패: {response.status_code}",
+                    "cleared_cells": 0
+                }
+            
+            notebook = response.json()
+            
+            # 기존 셀 개수 저장
+            original_cell_count = len(notebook["content"]["cells"])
+            
+            # 모든 셀 삭제 (빈 리스트로 교체)
+            notebook["content"]["cells"] = []
+            
+            # 노트북 저장
+            response = await session.put(f"{server_url}/api/contents/{DEFAULT_NOTEBOOK}", json=notebook)
+            
+            if response.status_code == 200:
+                logger.info(f"노트북 초기화 완료: {original_cell_count}개 셀 삭제")
+                return {
+                    "success": True,
+                    "message": f"노트북 초기화 완료: {original_cell_count}개 셀이 삭제되었습니다",
+                    "cleared_cells": original_cell_count,
+                    "notebook": DEFAULT_NOTEBOOK
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": f"노트북 저장 실패: {response.status_code}",
+                    "cleared_cells": 0
+                }
+                
+        except Exception as e:
+            logger.error(f"노트북 초기화 오류: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "cleared_cells": 0
+            }
+                    
+    async def restart_kernel_variables(self) -> Dict[str, Any]:
+        """JupyterHub 커널 변수 초기화 (커널 재시작)"""
+        try:
+            if not self.ws_manager:
+                return {
+                    "success": False,
+                    "error": "WebSocket 커널 매니저가 초기화되지 않았습니다"
+                }
+            
+            # 현재 커널 ID 저장
+            old_kernel_id = self.ws_manager._kernel_id
+            
+            # 커널 재시작 (새로운 커널 생성)
+            await self.ws_manager._cleanup()  # 기존 연결 정리
+            self.ws_manager._connected = False
+            self.ws_manager._kernel_id = None
+            self.ws_manager._ws = None
+            
+            # 새로운 커널로 연결
+            success = await self.ws_manager.ensure_connection()
+            
+            if success:
+                new_kernel_id = self.ws_manager._kernel_id
+                logger.info(f"커널 재시작 완료: {old_kernel_id} → {new_kernel_id}")
+                
+                return {
+                    "success": True,
+                    "message": "커널 변수 초기화 완료: 모든 변수가 삭제되었습니다",
+                    "old_kernel_id": old_kernel_id,
+                    "new_kernel_id": new_kernel_id
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": "새로운 커널 연결에 실패했습니다"
+                }
+                
+        except Exception as e:
+            logger.error(f"커널 재시작 오류: {e}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
+                            
+    async def reset_all(self) -> Dict[str, Any]:
+        """노트북과 커널 모두 완전 초기화"""
+        try:
+            # 1. 노트북 초기화
+            notebook_result = await self.clear_notebook()
+            
+            if not notebook_result["success"]:
+                return {
+                    "success": False,
+                    "error": f"노트북 초기화 실패: {notebook_result['error']}",
+                    "cleared_cells": 0
+                }
+            
+            # 2. 커널 변수 초기화
+            kernel_result = await self.restart_kernel_variables()
+            
+            if not kernel_result["success"]:
+                return {
+                    "success": False,
+                    "error": f"커널 초기화 실패: {kernel_result['error']}",
+                    "cleared_cells": notebook_result["cleared_cells"],
+                    "partial_success": "노트북은 초기화되었지만 커널 초기화 실패"
+                }
+            
+            logger.info("완전 초기화 완료: 노트북 + 커널")
+            return {
+                "success": True,
+                "message": f"완전 초기화 완료: {notebook_result['cleared_cells']}개 셀 삭제 + 커널 변수 초기화",
+                "cleared_cells": notebook_result["cleared_cells"],
+                "notebook_reset": True,
+                "kernel_reset": True,
+                "old_kernel_id": kernel_result.get("old_kernel_id"),
+                "new_kernel_id": kernel_result.get("new_kernel_id")
+            }
+            
+        except Exception as e:
+            logger.error(f"완전 초기화 오류: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "cleared_cells": 0
+            }                            
+
     async def _safe_execute(self, code: str) -> Dict[str, Any]:
         return await self.ws_adapter.safe_execute_websocket(code)
     
@@ -654,6 +798,24 @@ async def execute_cell(
     return await client.execute_cell(cell_index)
 
 @mcp.tool(
+    description="노트북과 커널을 모두 초기화합니다. 모든 셀을 삭제하고 커널 변수도 초기화하는 완전 초기화입니다."
+)
+async def reset_all() -> Dict[str, Any]:
+    """
+    노트북과 커널을 모두 완전히 초기화합니다.
+    
+    Returns:
+        성공 시: {"success": True, "message": "완전 초기화 완료", "cleared_cells": 셀_개수}
+        실패 시: {"success": False, "error": "에러_메시지"}
+        
+    Note:
+        - 노트북의 모든 셀이 삭제됩니다
+        - 커널의 모든 변수가 초기화됩니다
+        - 완전히 새로운 상태로 시작할 수 있습니다
+    """
+    return await client.reset_all()
+
+@mcp.tool(
     description="커널의 전역 변수와 함수 목록을 조회합니다. 현재 정의된 변수, 함수, 객체들을 확인할 때 사용하세요."
 )
 async def get_kernel_globals(
@@ -749,7 +911,7 @@ def get_server_status() -> Dict[str, Any]:
         "timestamp": time.time(),
         "default_notebook": DEFAULT_NOTEBOOK,
         "core_tools": ["add_and_execute_cell", "execute_code", "get_execution_history", "add_cell", "execute_cell"],
-        "management_tools": ["create_notebook", "list_notebooks"],
+        "management_tools": ["create_notebook"],
         "config": {
             "hub_url": JUPYTERHUB_CONFIG["hub_url"],
             "username": JUPYTERHUB_CONFIG["username"]
@@ -793,7 +955,6 @@ def get_help() -> str:
 
 ## 📁 관리 도구 (선택사항)
 - create_notebook(name, path) - 별도 노트북 생성
-- list_notebooks(path) - 노트북 목록 조회
 
 ## 🎯 사용 패턴
 
@@ -847,7 +1008,6 @@ if __name__ == "__main__":
     print("  📝 add_cell, execute_cell")
     
     print("\n📁 Management Tools (2) - Optional:")
-    print("  📓 create_notebook, list_notebooks")
     
     print("\n📡 Starting kernel-focused server...")
     mcp.run(transport="sse", host=SERVER_HOST, port=SERVER_PORT)
