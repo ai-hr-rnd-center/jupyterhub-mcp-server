@@ -806,6 +806,78 @@ async def restart_session() -> Dict[str, Any]:
     }
 
 
+
+@mcp.tool(
+    description="현재 작업 노트북의 모든 셀을 삭제합니다. 커널 변수는 유지됩니다."
+)
+async def clear_notebook() -> Dict[str, Any]:
+    """
+    현재 작업 노트북의 모든 셀을 삭제합니다.
+    
+    Note:
+        - 노트북의 모든 셀이 삭제됩니다
+        - 커널의 변수와 상태는 그대로 유지됩니다
+        - 노트북만 깨끗하게 정리하고 싶을 때 사용
+        - 완전 초기화를 원한다면 reset_all() 사용
+    
+    Returns:
+        성공 시: {"success": True, "message": "노트북 정리 완료", "cleared_cells": 삭제된_셀_개수}
+        실패 시: {"success": False, "error": "에러_메시지"}
+    """
+    return await client.clear_notebook()
+
+
+# reset_all() 함수도 업데이트가 필요할 것 같습니다
+@mcp.tool(
+    description="노트북과 커널을 모두 초기화합니다. 모든 셀을 삭제하고 커널 변수도 초기화하는 완전 초기화입니다."
+)
+async def reset_all() -> Dict[str, Any]:
+    """
+    노트북과 커널을 모두 완전히 초기화합니다.
+    
+    Returns:
+        성공 시: {"success": True, "message": "완전 초기화 완료", "cleared_cells": 셀_개수, "kernel_restarted": True}
+        실패 시: {"success": False, "error": "에러_메시지"}
+        
+    Note:
+        - 노트북의 모든 셀이 삭제됩니다
+        - 커널의 모든 변수가 초기화됩니다 (세션 재시작)
+        - 완전히 새로운 상태로 시작할 수 있습니다
+        - 단순히 노트북만 정리하려면 clear_notebook() 사용
+    """
+    try:
+        # 1. 노트북 정리
+        clear_result = await client.clear_notebook()
+        
+        # 2. 세션 재시작 (커널 변수 초기화)
+        restart_result = await client.ws_manager.restart_session() if client.ws_manager else {"success": False, "error": "WebSocket 매니저 없음"}
+        
+        if clear_result["success"] and restart_result["success"]:
+            return {
+                "success": True,
+                "message": "완전 초기화 완료 (노트북 + 커널)",
+                "cleared_cells": clear_result.get("cleared_cells", 0),
+                "kernel_restarted": True,
+                "notebook": clear_result.get("notebook", ""),
+                "new_session_id": restart_result.get("new_session_id", ""),
+                "new_kernel_id": restart_result.get("new_kernel_id", "")
+            }
+        else:
+            return {
+                "success": False,
+                "error": f"초기화 실패 - 노트북: {clear_result.get('error', 'OK')}, 커널: {restart_result.get('error', 'OK')}",
+                "cleared_cells": clear_result.get("cleared_cells", 0),
+                "kernel_restarted": restart_result.get("success", False)
+            }
+            
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "cleared_cells": 0,
+            "kernel_restarted": False
+        }
+    
 @mcp.tool(
     description="JupyterHub MCP 서버의 현재 상태와 설정 정보를 확인합니다."
 )
@@ -818,7 +890,7 @@ def get_server_status() -> Dict[str, Any]:
     """
     return {
         "status": "running",
-        "version": "4.0.0-kernel-focused",
+        "version": "1.0.0-kernel-focused",
         "timestamp": time.time(),
         "default_notebook": DEFAULT_NOTEBOOK,
         "core_tools": ["add_and_execute_cell", "execute_code", "get_execution_history", "add_cell", "execute_cell"],
@@ -835,7 +907,7 @@ def get_help() -> str:
 # JupyterHub MCP Server v1.0.0 🚀
 ## WebSocket 기반 실시간 커널 연동
 
-## 🎯 핵심 도구 (10개) - 커널 에이전트용
+## 🎯 핵심 도구 (11개) - 커널 에이전트용
 
 ### 💻 **즉시 실행 (가장 일반적)**
 - **add_and_execute_cell(content)** ⭐ - 셀 추가하고 즉시 실행
@@ -873,8 +945,12 @@ def get_help() -> str:
   * as_text=True로 JSON 텍스트 형태 반환 가능
   * 변수 타입과 값/길이 정보 제공
 
+- **clear_notebook()** - 노트북만 정리 🧹
+  * 모든 셀 삭제, 커널 변수는 유지
+  * 노트북을 깨끗하게 정리하고 싶을 때
+
 - **reset_all()** - 노트북 + 커널 완전 초기화 ♻️
-  * 모든 셀 삭제 + 모든 변수 초기화
+  * 모든 셀 삭제 + 모든 변수 초기화 (세션 재시작)
   * 완전히 새로운 상태로 시작
 
 ### 🌐 **세션 제어**
@@ -919,16 +995,16 @@ execute_cell(0)
 add_and_execute_cell("df.head()")
 ```
 
-### 4. 작업 히스토리 관리
+### 4. 정리 및 초기화 옵션 🧹
 ```python
-# 지금까지 실행한 모든 셀 확인
-get_execution_history()
+# 노트북만 정리 (변수 유지)
+clear_notebook()
 
-# AI 대화 형태로 변환
-get_ai_history(exclude_empty=True, max_output_length=200)
-
-# 완전 초기화
+# 완전 초기화 (노트북 + 커널)
 reset_all()
+
+# 차이점 확인
+get_kernel_globals()  # clear_notebook 후에는 변수 유지됨
 ```
 
 ## 🔧 **고급 활용**
@@ -960,7 +1036,14 @@ add_and_execute_cell("def my_func(x): return x ** 2")
 add_and_execute_cell("print(my_func(21))")
 ```
 
-### 데이터 분석 워크플로우 📈
+### 6. 데이터 분석 워크플로우 📈
+```python
+# 지금까지 실행한 모든 셀 확인
+get_execution_history()
+
+# AI 대화 형태로 변환
+get_ai_history(exclude_empty=True, max_output_length=200)
+```
 ```python
 # 1. 데이터 로드
 add_and_execute_cell("import pandas as pd\\ndf = pd.read_csv('sales.csv')")
@@ -1010,7 +1093,7 @@ Version: 1.0.0-kernel-focused | Transport: SSE | Port: {SERVER_PORT}
 """
 
 if __name__ == "__main__":
-    print(f"🚀 {SERVER_NAME} v4.0.0 (Kernel Focused)")
+    print(f"🚀 {SERVER_NAME} v1.0.0 (Kernel Focused)")
     print(f"📍 http://{SERVER_HOST}:{SERVER_PORT}/sse")
     print(f"📝 JupyterHub: {JUPYTERHUB_CONFIG['hub_url']}")
     print(f"👤 User: {JUPYTERHUB_CONFIG['username']}")
