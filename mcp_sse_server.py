@@ -136,33 +136,6 @@ class JupyterHubClient:
             logger.error(f"Error ensuring default notebook: {e}")
             return False
     
-    # async def list_notebooks(self, path: str = "") -> Dict[str, Any]:
-    #     """노트북 목록"""
-    #     try:
-    #         server_url = await self.get_server_url()
-    #         session = await self.get_session()
-            
-    #         response = await session.get(f"{server_url}/api/contents/{path}")
-            
-    #         if response.status_code == 200:
-    #             contents = response.json()
-    #             notebooks = []
-                
-    #             for item in contents.get("content", []):
-    #                 if item.get("type") == "notebook":
-    #                     notebooks.append({
-    #                         "name": item["name"],
-    #                         "path": item["path"]
-    #                     })
-                
-    #             return {"success": True, "notebooks": notebooks, "count": len(notebooks)}
-    #         else:
-    #             return {"success": False, "error": f"Failed: {response.status_code}"}
-                
-    #     except Exception as e:
-    #         return {"success": False, "error": str(e)}
-    
-    
     async def add_cell(self, content: str, cell_type: str = "code") -> Dict[str, Any]:
         """기본 노트북에 셀 추가"""
         try:
@@ -710,24 +683,6 @@ async def execute_cell(
         실패 시: {"success": False, "error": "에러_메시지"}
     """
     return await client.execute_cell(cell_index)
-
-@mcp.tool(
-    description="노트북과 커널을 모두 초기화합니다. 모든 셀을 삭제하고 커널 변수도 초기화하는 완전 초기화입니다."
-)
-async def reset_all() -> Dict[str, Any]:
-    """
-    노트북과 커널을 모두 완전히 초기화합니다.
-    
-    Returns:
-        성공 시: {"success": True, "message": "완전 초기화 완료", "cleared_cells": 셀_개수}
-        실패 시: {"success": False, "error": "에러_메시지"}
-        
-    Note:
-        - 노트북의 모든 셀이 삭제됩니다
-        - 커널의 모든 변수가 초기화됩니다
-        - 완전히 새로운 상태로 시작할 수 있습니다
-    """
-    return await client.reset_all()
 
 @mcp.tool(
     description="커널의 전역 변수와 함수 목록을 조회합니다. 현재 정의된 변수, 함수, 객체들을 확인할 때 사용하세요."
