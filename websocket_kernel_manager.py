@@ -37,6 +37,7 @@ class WebSocketKernelManager:
         
         # 연결 상태
         self._connected = False
+        self._session_id = None
         self._kernel_id = None
         self._ws = None
         self._ws_url = None
@@ -53,17 +54,17 @@ class WebSocketKernelManager:
     async def ensure_connection(self):
         """연결 확인 및 초기화"""
         # 이미 연결되어 있으면 바로 반환
-        if self._connected and self._ws:
+        if self._connected and self._ws and self._session_id:
             return True
             
         with self._init_lock:
             # 락 획득 후 다시 확인
-            if self._connected and self._ws:
+            if self._connected and self._ws and self._session_id:
                 return True
                 
             try:
-                # 1. 커널 확인/생성
-                await self._ensure_kernel()
+                # 1. 세션, 커널 확인/생성
+                await self._ensure_session_and_kernel()
                 
                 # 2. WebSocket 연결
                 await self._connect_websocket()
@@ -78,41 +79,94 @@ class WebSocketKernelManager:
                 self.logger.error(f"커널 연결 실패: {e}")
                 return False
     
-    async def _ensure_kernel(self):
-        """커널 확인 또는 생성"""
+    # async def _ensure_kernel(self):
+    #     """커널 확인 또는 생성"""
+    #     try:
+    #         headers = {}
+    #         if self.api_token:
+    #             headers["Authorization"] = f"token {self.api_token}"
+            
+    #         # 기존 커널 확인
+    #         response = requests.get(f"{self.user_url}/api/kernels", headers=headers, timeout=10)
+            
+    #         if response.status_code == 200:
+    #             kernels = response.json()
+    #             for kernel in kernels:
+    #                 if kernel.get('execution_state') == 'idle':
+    #                     self._kernel_id = kernel['id']
+    #                     self.logger.info(f"기존 커널 사용: {self._kernel_id}")
+    #                     return
+            
+    #         # 새 커널 생성
+    #         response = requests.post(
+    #             f"{self.user_url}/api/kernels",
+    #             json={"name": "python3"},
+    #             headers=headers,
+    #             timeout=10
+    #         )
+            
+    #         if response.status_code in [200, 201]:
+    #             kernel_info = response.json()
+    #             self._kernel_id = kernel_info['id']
+    #             self.logger.info(f"새 커널 생성: {self._kernel_id}")
+    #         else:
+    #             raise Exception(f"커널 생성 실패: {response.status_code} - {response.text}")
+                
+    #     except Exception as e:
+    #         raise Exception(f"커널 설정 실패: {e}")
+
+    async def _ensure_session_and_kernel(self):
+        """세션 기반 커널 확인 또는 생성"""
         try:
             headers = {}
             if self.api_token:
                 headers["Authorization"] = f"token {self.api_token}"
             
-            # 기존 커널 확인
-            response = requests.get(f"{self.user_url}/api/kernels", headers=headers, timeout=10)
+            # 노트북 파일 경로 (MCP 서버의 DEFAULT_NOTEBOOK 사용)
+            notebook_path = os.getenv("DEFAULT_NOTEBOOK", "session_notebook.ipynb")
+            
+            # 1. 기존 세션 확인 (노트북 파일 기준)
+            response = requests.get(f"{self.user_url}/api/sessions", headers=headers, timeout=10)
             
             if response.status_code == 200:
-                kernels = response.json()
-                for kernel in kernels:
-                    if kernel.get('execution_state') == 'idle':
-                        self._kernel_id = kernel['id']
-                        self.logger.info(f"기존 커널 사용: {self._kernel_id}")
+                sessions = response.json()
+                for session in sessions:
+                    # 같은 노트북 파일의 세션이 있으면 재사용
+                    if session.get('path') == notebook_path or session.get('name') == notebook_path:
+                        self._session_id = session['id']
+                        self._kernel_id = session['kernel']['id']
+                        self.logger.info(f"기존 세션 재사용: {self._session_id} (커널: {self._kernel_id})")
                         return
             
-            # 새 커널 생성
+            # 2. 기존 세션이 없으면 새 세션 생성
+            self.logger.info(f"새 세션 생성: {notebook_path}")
+            
+            session_data = {
+                "path": notebook_path,
+                "name": "session_notebook.ipynb", 
+                "type": "notebook",
+                "kernel": {
+                    "name": "python3"
+                }
+            }
+            
             response = requests.post(
-                f"{self.user_url}/api/kernels",
-                json={"name": "python3"},
+                f"{self.user_url}/api/sessions",
+                json=session_data,
                 headers=headers,
                 timeout=10
             )
             
             if response.status_code in [200, 201]:
-                kernel_info = response.json()
-                self._kernel_id = kernel_info['id']
-                self.logger.info(f"새 커널 생성: {self._kernel_id}")
+                session_info = response.json()
+                self._session_id = session_info['id']
+                self._kernel_id = session_info['kernel']['id']
+                self.logger.info(f"새 세션 생성 완료: {self._session_id} (커널: {self._kernel_id})")
             else:
-                raise Exception(f"커널 생성 실패: {response.status_code} - {response.text}")
+                raise Exception(f"세션 생성 실패: {response.status_code} - {response.text}")
                 
         except Exception as e:
-            raise Exception(f"커널 설정 실패: {e}")
+            raise Exception(f"세션 설정 실패: {e}")    
     
     async def _connect_websocket(self):
         """WebSocket 연결 (스레드 없는 버전)"""
@@ -314,6 +368,78 @@ print(json.dumps(result))
         except Exception as e:
             self.logger.error(f"전역 변수 조회 실패: {e}")
             return {}
+        
+    async def restart_session(self) -> Dict[str, Any]:
+        """현재 세션을 완전히 재시작 (새로운 세션 + 커널 생성)"""
+        try:
+            old_session_id = self._session_id
+            old_kernel_id = self._kernel_id
+            
+            # 1. 기존 세션 종료
+            if self._session_id:
+                await self._terminate_current_session()
+            
+            # 2. WebSocket 연결 정리
+            await self._cleanup()
+            
+            # 3. 새로운 세션 시작
+            success = await self.ensure_connection()
+            
+            if success:
+                self.logger.info(f"세션 재시작 완료: {old_session_id} → {self._session_id}")
+                return {
+                    "success": True,
+                    "message": "세션 재시작 완료",
+                    "old_session_id": old_session_id,
+                    "new_session_id": self._session_id,
+                    "old_kernel_id": old_kernel_id,
+                    "new_kernel_id": self._kernel_id
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": "새로운 세션 생성 실패"
+                }
+                
+        except Exception as e:
+            self.logger.error(f"세션 재시작 오류: {e}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
+    
+    async def _terminate_current_session(self):
+        """현재 세션 종료"""
+        try:
+            if not self._session_id:
+                return
+                
+            headers = {}
+            if self.api_token:
+                headers["Authorization"] = f"token {self.api_token}"
+            
+            response = requests.delete(
+                f"{self.user_url}/api/sessions/{self._session_id}",
+                headers=headers,
+                timeout=10
+            )
+            
+            if response.status_code in [200, 204]:
+                self.logger.info(f"세션 종료 완료: {self._session_id}")
+            else:
+                self.logger.warning(f"세션 종료 실패: {response.status_code}")
+                
+        except Exception as e:
+            self.logger.error(f"세션 종료 오류: {e}")
+    
+    def get_session_info(self) -> Dict[str, Any]:
+        """현재 세션 정보 반환"""
+        return {
+            "session_id": self._session_id,
+            "kernel_id": self._kernel_id,
+            "connected": self._connected,
+            "ws_url": self._ws_url
+        }        
     
     async def _cleanup(self):
         """리소스 정리"""

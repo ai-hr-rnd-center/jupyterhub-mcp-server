@@ -415,92 +415,6 @@ class JupyterHubClient:
                 "cleared_cells": 0
             }
                     
-    async def restart_kernel_variables(self) -> Dict[str, Any]:
-        """JupyterHub 커널 변수 초기화 (커널 재시작)"""
-        try:
-            if not self.ws_manager:
-                return {
-                    "success": False,
-                    "error": "WebSocket 커널 매니저가 초기화되지 않았습니다"
-                }
-            
-            # 현재 커널 ID 저장
-            old_kernel_id = self.ws_manager._kernel_id
-            
-            # 커널 재시작 (새로운 커널 생성)
-            await self.ws_manager._cleanup()  # 기존 연결 정리
-            self.ws_manager._connected = False
-            self.ws_manager._kernel_id = None
-            self.ws_manager._ws = None
-            
-            # 새로운 커널로 연결
-            success = await self.ws_manager.ensure_connection()
-            
-            if success:
-                new_kernel_id = self.ws_manager._kernel_id
-                logger.info(f"커널 재시작 완료: {old_kernel_id} → {new_kernel_id}")
-                
-                return {
-                    "success": True,
-                    "message": "커널 변수 초기화 완료: 모든 변수가 삭제되었습니다",
-                    "old_kernel_id": old_kernel_id,
-                    "new_kernel_id": new_kernel_id
-                }
-            else:
-                return {
-                    "success": False,
-                    "error": "새로운 커널 연결에 실패했습니다"
-                }
-                
-        except Exception as e:
-            logger.error(f"커널 재시작 오류: {e}")
-            return {
-                "success": False,
-                "error": str(e)
-            }
-                            
-    async def reset_all(self) -> Dict[str, Any]:
-        """노트북과 커널 모두 완전 초기화"""
-        try:
-            # 1. 노트북 초기화
-            notebook_result = await self.clear_notebook()
-            
-            if not notebook_result["success"]:
-                return {
-                    "success": False,
-                    "error": f"노트북 초기화 실패: {notebook_result['error']}",
-                    "cleared_cells": 0
-                }
-            
-            # 2. 커널 변수 초기화
-            kernel_result = await self.restart_kernel_variables()
-            
-            if not kernel_result["success"]:
-                return {
-                    "success": False,
-                    "error": f"커널 초기화 실패: {kernel_result['error']}",
-                    "cleared_cells": notebook_result["cleared_cells"],
-                    "partial_success": "노트북은 초기화되었지만 커널 초기화 실패"
-                }
-            
-            logger.info("완전 초기화 완료: 노트북 + 커널")
-            return {
-                "success": True,
-                "message": f"완전 초기화 완료: {notebook_result['cleared_cells']}개 셀 삭제 + 커널 변수 초기화",
-                "cleared_cells": notebook_result["cleared_cells"],
-                "notebook_reset": True,
-                "kernel_reset": True,
-                "old_kernel_id": kernel_result.get("old_kernel_id"),
-                "new_kernel_id": kernel_result.get("new_kernel_id")
-            }
-            
-        except Exception as e:
-            logger.error(f"완전 초기화 오류: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "cleared_cells": 0
-            }                            
 
     async def _safe_execute(self, code: str) -> Dict[str, Any]:
         return await self.ws_adapter.safe_execute_websocket(code)
@@ -853,47 +767,44 @@ async def get_ai_history(
     return await client.to_ai_history(exclude_empty, max_output_length)
 
 
-# =============================================================================
-# 관리용 도구들 (선택사항 - 필요시에만 사용)
-# =============================================================================
+@mcp.tool(
+    description="현재 세션 정보를 확인합니다 (세션 ID, 커널 ID, 연결 상태 등)"
+)
+async def get_session_info() -> Dict[str, Any]:
+    """
+    현재 WebSocket 세션 정보 조회
+    
+    Returns:
+        세션 정보 (session_id, kernel_id, connected, ws_url)
+    """
+    if client.ws_manager:
+        return {
+            "success": True,
+            **client.ws_manager.get_session_info()
+        }
+    return {
+        "success": False,
+        "error": "WebSocket 매니저가 초기화되지 않았습니다"
+    }
 
-# @mcp.tool(
-#     description="새로운 Jupyter 노트북 파일을 생성합니다 (관리용 - 기본 작업 노트북과 별도)."
-# )
-# async def create_notebook(
-#     name: str,  # 노트북 이름
-#     path: str = ""  # 저장 경로
-# ) -> Dict[str, Any]:
-#     """
-#     새 노트북을 생성합니다 (관리용).
+@mcp.tool(
+    description="현재 세션을 완전히 재시작합니다. 새로운 세션과 커널이 생성되어 모든 변수가 초기화됩니다."
+)
+async def restart_session() -> Dict[str, Any]:
+    """
+    현재 세션을 완전히 재시작
     
-#     Args:
-#         name: 노트북 이름 (.ipynb 확장자는 자동 추가됨)
-#         path: 저장할 경로 (선택사항, 기본값: 루트)
-    
-#     Returns:
-#         성공 시: {"success": True, "path": "생성된_경로", "message": "생성_메시지"}
-#         실패 시: {"success": False, "error": "에러_메시지"}
-#     """
-#     return await client.create_notebook(name, path)
+    Returns:
+        성공 시: {"success": True, "message": "재시작 완료", "old_session_id": ..., "new_session_id": ...}
+        실패 시: {"success": False, "error": "에러_메시지"}
+    """
+    if client.ws_manager:
+        return await client.ws_manager.restart_session()
+    return {
+        "success": False,
+        "error": "WebSocket 매니저가 초기화되지 않았습니다"
+    }
 
-# @mcp.tool(
-#     description="지정된 경로의 모든 Jupyter 노트북 목록을 조회합니다 (관리용)."
-# )
-# async def list_notebooks(
-#     path: str = ""  # 조회할 경로
-# ) -> Dict[str, Any]:
-#     """
-#     노트북 목록을 조회합니다 (관리용).
-    
-#     Args:
-#         path: 조회할 경로 (선택사항, 기본값: 루트)
-    
-#     Returns:
-#         성공 시: {"success": True, "notebooks": [노트북_목록], "count": 개수}
-#         실패 시: {"success": False, "error": "에러_메시지"}
-#     """
-#     return await client.list_notebooks(path)
 
 @mcp.tool(
     description="JupyterHub MCP 서버의 현재 상태와 설정 정보를 확인합니다."
@@ -918,52 +829,64 @@ def get_server_status() -> Dict[str, Any]:
         }
     }
 
-@mcp.tool(description="현재 WebSocket에서 사용 중인 커널 정보 확인")
-async def debug_current_kernel():
-    if client.ws_manager:
-        return {
-            "kernel_id": client.ws_manager._kernel_id,
-            "connected": client.ws_manager._connected,
-            "ws_url": client.ws_manager._ws_url
-        }
-    return {"no_kernel_manager": True}
-
 @mcp.resource("jupyter://help")
 def get_help() -> str:
     return f"""
-# JupyterHub MCP Server v1.0.0
+# JupyterHub MCP Server v1.0.0 🚀
+## WebSocket 기반 실시간 커널 연동
 
-## 🚀 핵심 도구 (5개) - 커널 에이전트용
+## 🎯 핵심 도구 (10개) - 커널 에이전트용
 
-### 💻 코드 실행
-- **add_and_execute_cell(content)** - 셀 추가하고 즉시 실행
-  * 가장 일반적인 사용 패턴!
+### 💻 **즉시 실행 (가장 일반적)**
+- **add_and_execute_cell(content)** ⭐ - 셀 추가하고 즉시 실행
   * 새로운 분석이나 계산을 바로 수행할 때
   * 예: add_and_execute_cell("import pandas as pd\\ndf = pd.read_csv('data.csv')\\nprint(df.shape)")
 
 - **execute_code(content)** - 코드 즉시 실행 (위와 동일)
-  * add_and_execute_cell과 같은 기능
+  * add_and_execute_cell과 같은 기능  
   * 예: execute_code("df.head()")
 
+### 📊 **작업 관리**
 - **get_execution_history()** - 실행 히스토리 조회
   * 이전에 실행한 코드들과 결과 확인할 때
   * 현재 작업 상태 파악할 때
 
-### 📝 셀 관리
+- **get_ai_history(exclude_empty, max_output_length)** - AI 대화 형태로 변환
+  * 노트북을 대화 히스토리 형태로 변환
+  * exclude_empty=True: 빈 셀 제외
+  * max_output_length=200: 출력 길이 제한
+
+### 📝 **세밀한 제어**
 - **add_cell(content, cell_type)** - 셀 추가만 (실행 안함)
   * 코드를 준비해두고 나중에 실행할 때
+  * cell_type="code" 또는 "markdown"
   * 마크다운 문서화할 때
 
 - **execute_cell(cell_index)** - 특정 셀 재실행
   * 이전 코드를 다시 실행할 때
+  * cell_index는 0부터 시작
   * 데이터 변경 후 결과 갱신할 때
 
+### 🔄 **커널 관리**
+- **get_kernel_globals(as_text)** - 전역 변수 조회
+  * 현재 정의된 변수, 함수, 객체들 확인
+  * as_text=True로 JSON 텍스트 형태 반환 가능
+  * 변수 타입과 값/길이 정보 제공
+
 - **reset_all()** - 노트북 + 커널 완전 초기화 ♻️
+  * 모든 셀 삭제 + 모든 변수 초기화
+  * 완전히 새로운 상태로 시작
 
-## 📁 관리 도구 (선택사항)
-- create_notebook(name, path) - 별도 노트북 생성
+### 🌐 **세션 제어**
+- **get_session_info()** - 현재 세션 정보 확인
+  * session_id, kernel_id, 연결 상태 등
+  * WebSocket URL 정보
 
-## 🎯 사용 패턴
+- **restart_session()** - 세션 완전 재시작
+  * 새로운 세션과 커널 생성으로 완전 초기화
+  * 기존 세션 종료 후 새 세션 생성
+
+## 🎯 **사용 패턴**
 
 ### 1. 즉시 코드 실행 (가장 일반적) ⭐
 ```python
@@ -972,7 +895,19 @@ add_and_execute_cell("print('Hello, World!')")
 add_and_execute_cell("import numpy as np\\narr = np.array([1,2,3])\\nprint(arr.mean())")
 ```
 
-### 2. 단계별 작업
+### 2. 변수 지속성 활용 🔄
+```python
+# 1단계: 데이터 설정
+add_and_execute_cell("data = [1, 2, 3, 4, 5]")
+
+# 2단계: 이전 변수 재사용
+add_and_execute_cell("result = sum(data)\\nprint(f'Sum: {{result}}')")
+
+# 3단계: 변수 상태 확인
+get_kernel_globals()
+```
+
+### 3. 단계별 작업
 ```python
 # 1. 코드 준비
 add_cell("import pandas as pd\\ndf = pd.read_csv('data.csv')", "code")
@@ -984,22 +919,94 @@ execute_cell(0)
 add_and_execute_cell("df.head()")
 ```
 
-### 3. 작업 히스토리 확인
+### 4. 작업 히스토리 관리
 ```python
 # 지금까지 실행한 모든 셀 확인
 get_execution_history()
+
+# AI 대화 형태로 변환
+get_ai_history(exclude_empty=True, max_output_length=200)
+
+# 완전 초기화
+reset_all()
 ```
 
-## 💡 핵심 장점
+## 🔧 **고급 활용**
+
+### WebSocket 커널 직접 제어
+```python
+# 현재 세션 정보
+get_session_info()
+
+# 문제 발생 시 세션 재시작
+restart_session()
+
+# 모든 변수 실시간 조회
+get_kernel_globals(as_text=True)
+```
+
+### 실험적 개발 🧪
+```python
+# 함수 정의
+add_and_execute_cell("def my_func(x): return x * 2")
+
+# 테스트
+add_and_execute_cell("print(my_func(21))")
+
+# 함수 개선 (덮어쓰기)
+add_and_execute_cell("def my_func(x): return x ** 2")
+
+# 개선된 함수 테스트  
+add_and_execute_cell("print(my_func(21))")
+```
+
+### 데이터 분석 워크플로우 📈
+```python
+# 1. 데이터 로드
+add_and_execute_cell("import pandas as pd\\ndf = pd.read_csv('sales.csv')")
+
+# 2. 탐색적 분석
+add_and_execute_cell("print(df.info())\\nprint(df.describe())")
+
+# 3. 변수 상태 확인
+get_kernel_globals()  # df 변수 확인
+
+# 4. 시각화
+add_and_execute_cell("import matplotlib.pyplot as plt\\ndf.plot()\\nplt.show()")
+
+# 5. 히스토리 확인
+get_execution_history()
+```
+
+## 💡 **핵심 장점**
 - **경로 고민 불필요**: 항상 `{DEFAULT_NOTEBOOK}` 사용
-- **빠른 실행**: add_and_execute_cell()로 바로 코드 실행
+- **빠른 실행**: add_and_execute_cell()로 바로 코드 실행  
 - **커널 네임스페이스 활용**: 변수가 계속 유지됨
+- **WebSocket 실시간 통신**: JupyterHub 커널과 직접 연결
+- **안전성**: 코드 검증 및 샌드박스 환경
+- **AI 최적화**: Claude 같은 AI 에이전트 사용에 특화
 - **단순화된 워크플로우**: 경로 관리 없이 코드 실행에 집중
 
-Config: {JUPYTERHUB_CONFIG['hub_url']} | {JUPYTERHUB_CONFIG['username']}
-Default Notebook: {DEFAULT_NOTEBOOK}
+## 🏗️ **시스템 구성**
+- Hub URL: {JUPYTERHUB_CONFIG['hub_url']}
+- Username: {JUPYTERHUB_CONFIG['username']}  
+- Default Notebook: {DEFAULT_NOTEBOOK}
+- WebSocket: 실시간 커널 통신
+- 세션 관리: 자동 생성/재사용
+- 코드 검증: python_code_type_checker 사용
+
+## 🛡️ **보안 기능**
+- **코드 검증**: 실행 전 Python 문법 및 안전성 검증
+- **샌드박스**: JupyterHub의 격리된 환경에서 실행
+- **타임아웃**: 무한 실행 방지 (기본 60초)
+- **에러 처리**: 연결 실패, 실행 오류 등 안전하게 처리
 
 ⚡ **추천**: add_and_execute_cell()을 주로 사용하세요!
+🔄 **상태 유지**: 한 번 정의한 변수/함수는 계속 사용 가능
+🛡️ **안전성**: 모든 코드는 검증 후 실행
+🌐 **실시간**: WebSocket을 통한 즉시 응답
+
+Version: 1.0.0-kernel-focused | Transport: SSE | Port: {SERVER_PORT}
 """
 
 if __name__ == "__main__":
