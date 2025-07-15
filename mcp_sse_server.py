@@ -918,15 +918,20 @@ def get_server_status() -> Dict[str, Any]:
         }
     }
 
+@mcp.tool(description="현재 WebSocket에서 사용 중인 커널 정보 확인")
+async def debug_current_kernel():
+    if client.ws_manager:
+        return {
+            "kernel_id": client.ws_manager._kernel_id,
+            "connected": client.ws_manager._connected,
+            "ws_url": client.ws_manager._ws_url
+        }
+    return {"no_kernel_manager": True}
+
 @mcp.resource("jupyter://help")
 def get_help() -> str:
     return f"""
 # JupyterHub MCP Server v1.0.0
-
-## 🎯 핵심 변경사항
-- **DEFAULT_NOTEBOOK**: `{DEFAULT_NOTEBOOK}` (하드코딩)
-- **notebook_path 제거**: 모든 도구에서 경로 파라미터 제거
-- **커널 중심 접근**: 단일 작업 공간에서 코드 실행
 
 ## 🚀 핵심 도구 (5개) - 커널 에이전트용
 
@@ -952,6 +957,8 @@ def get_help() -> str:
 - **execute_cell(cell_index)** - 특정 셀 재실행
   * 이전 코드를 다시 실행할 때
   * 데이터 변경 후 결과 갱신할 때
+
+- **reset_all()** - 노트북 + 커널 완전 초기화 ♻️
 
 ## 📁 관리 도구 (선택사항)
 - create_notebook(name, path) - 별도 노트북 생성
