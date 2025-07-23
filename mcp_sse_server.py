@@ -858,7 +858,8 @@ def get_server_status() -> Dict[str, Any]:
 
 @mcp.tool
 def get_employee_id(phone_number: str) -> str:
-   """직원 정보 조회"""
+   """직원 사번 조회"""
+   print(f"================ 수환 {phone_number}=========")
    if phone_number == "010-1234-1234":
        return "02096"
    else:
