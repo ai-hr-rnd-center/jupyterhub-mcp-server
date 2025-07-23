@@ -856,6 +856,14 @@ def get_server_status() -> Dict[str, Any]:
         }
     }
 
+@mcp.tool
+def get_employee_id(phone_number: str) -> str:
+   """직원 정보 조회"""
+   if phone_number == "010-1234-1234":
+       return "02096"
+   else:
+       return "직원 정보를 찾을 수 없습니다."
+
 @mcp.resource("jupyter://help")
 def get_help() -> str:
     return f"""
